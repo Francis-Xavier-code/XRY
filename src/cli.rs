@@ -282,7 +282,7 @@ fn primary_footer_text(text: &str) -> String {
 }
 
 #[derive(Debug, Parser)]
-#[command(name = "gqy", version, about = "希尔娅 CLI AI Agent")]
+#[command(name = "hilia", version, about = "希尔娅 CLI AI Agent")]
 pub struct Cli {
     #[arg(long)]
     pub plan: bool,
@@ -347,10 +347,10 @@ fn extract_debug_flag(args: &mut Vec<OsString>) -> bool {
 fn localized_command() -> clap::Command {
     let mut command = Cli::command();
     command = command
-        .about(t("希尔娅 CLI AI Agent", "GQY 命令行 AI 助手"))
+        .about(t("希尔娅 CLI AI Agent", "希尔娅 命令行 AI 助手"))
         .override_usage(t(
-            "gqy [OPTIONS] [MESSAGE]... [COMMAND]",
-            "gqy [选项] [消息]... [命令]",
+            "hilia [OPTIONS] [MESSAGE]... [COMMAND]",
+            "hilia [选项] [消息]... [命令]",
         ));
     if is_zh() {
         command = command
@@ -358,12 +358,12 @@ fn localized_command() -> clap::Command {
             .arg_required_else_help(false)
             .next_help_heading("选项")
             .help_template("{about}\n\n用法: {usage}\n\n命令:\n{subcommands}\n参数:\n{positionals}\n选项:\n{options}\n{after-help}")
-            .after_help("提示：不带参数进入 REPL；直接输入消息会发送一次对话。可在配置界面设置语言，HILIA_LANG 可临时覆盖。")
+            .after_help("提示：不带参数进入 REPL；直接输入消息会发送一次对话。可在配置界面设置语言，HILIA_LANG 可临时覆盖。开发者：2101497063@qq.com")
             .disable_help_subcommand(true);
     } else {
         command = command
             .after_help(
-                "Tip: run without arguments to enter the REPL; pass MESSAGE to send one chat turn. Set the language in the configuration UI; HILIA_LANG is a temporary override.",
+                "Tip: run without arguments to enter the REPL; pass MESSAGE to send one chat turn. Set the language in the configuration UI; HILIA_LANG is a temporary override. Developer: 2101497063@qq.com",
             )
             .disable_help_subcommand(true);
     }
@@ -433,8 +433,8 @@ fn localize_top_args(command: clap::Command) -> clap::Command {
         })
         .mut_arg("debug", |arg| {
             arg.help(t(
-                "Write detailed diagnostics to the GQY log directory",
-                "将详细诊断信息写入 GQY 日志目录",
+                "Write detailed diagnostics to the Hilia log directory",
+                "将详细诊断信息写入希尔娅日志目录",
             ))
         })
         .mut_arg("stdout", |arg| {
@@ -492,8 +492,8 @@ fn localize_subcommands(mut command: clap::Command) -> clap::Command {
         ),
         (
             "remove-shell-hook",
-            "Safely remove installed GQY shell hooks",
-            "安全删除已安装的 GQY shell hook",
+            "Safely remove installed Hilia shell hooks",
+            "安全删除已安装的希尔娅 shell hook",
         ),
         ("history", "Show conversation history", "显示会话历史"),
         (
@@ -518,7 +518,7 @@ fn localize_subcommands(mut command: clap::Command) -> clap::Command {
             "Clear current conversation history",
             "清空当前会话历史",
         ),
-        ("web", "Start the local GQY WebUI", "启动本地 GQY WebUI"),
+        ("web", "Start the local Hilia WebUI", "启动本地希尔娅 WebUI"),
     ];
     for (name, en, zh) in descriptions {
         command = command.mut_subcommand(name, |subcommand| subcommand.about(t(en, zh)));
@@ -1370,14 +1370,14 @@ pub async fn run(cli: Cli, paths: GqyPaths) -> Result<()> {
         Some(Command::Preview) => {
             crate::repl_avatar::print_if_supported(&mut io::stdout());
             render::print_markdown(
-                "# 月夜清影\n\n你好呀，我是**顾清影** —— 活在终端里的二次元少女。\n\
+                "# 月夜希尔娅\n\n你好呀，我是**希尔娅** —— 活在 Windows 里的 AI 助理。\n\
                  \n\
                  ## 今天的待办\n\n\
-                 - 修好 [GQY 的 GitHub](https://github.com/Francis-Xavier-code/GQY)\n\
+                 - 修好 [希尔娅的 GitHub](https://github.com/Francis-Xavier-code/GQY)\n\
                  - 学习 `Rust` 与 `OSC 8` 超链接\n\
                  - [x] 月夜主题已上线\n\
                  - [ ] 面板动画（下次）\n\n\
-                 > 链接在 iTerm2 / Terminal.app / kitty 里都可以点击\n\n\
+                 > 链接在 Windows Terminal / VS Code 里都可以点击\n\n\
                  ```rust\nfn greet() -> &'static str {\n    \"清影陪你写代码\"\n}\n```\n\n\
                  | 项目 | 状态 |\n| --- | --- |\n| 月夜主题 | ✅ 完成 |\n| 可点击链接 | ✅ 完成 |\n| 结构化渲染 | ✅ 完成 |\n",
             );
@@ -1450,8 +1450,8 @@ fn run_init(paths: &GqyPaths, kind: InitKind) -> Result<()> {
         println!(
             "{}\n",
             match kind {
-                InitKind::FirstRun => t("GQY first start", "GQY 首次启动"),
-                InitKind::Explicit => t("GQY initialization", "GQY 初始化"),
+                InitKind::FirstRun => t("Hilia first start", "希尔娅 首次启动"),
+                InitKind::Explicit => t("Hilia initialization", "希尔娅 初始化"),
             }
         );
     }
@@ -1477,7 +1477,7 @@ fn run_init(paths: &GqyPaths, kind: InitKind) -> Result<()> {
         t("Preparing data directory", "正在准备数据目录"),
         &paths.data_dir.display().to_string(),
     )?;
-    // 默认文件播种：scripts 索引不存在时创建空索引（GQY 扫描依赖它），
+    // 默认文件播种：scripts 索引不存在时创建空索引（希尔娅扫描依赖它），
     // 用户知识库为空且随包有默认 kb 时自动导入（brew 安装后开箱即用）
     let scripts_index = paths.config_dir.join("scripts/index.json");
     if !scripts_index.exists() {
@@ -1498,7 +1498,7 @@ fn run_init(paths: &GqyPaths, kind: InitKind) -> Result<()> {
     } else {
         println!(
             "{} {}",
-            t("initialized GQY at", "GQY 已初始化于"),
+            t("initialized Hilia at", "希尔娅已初始化于"),
             paths.config_dir.display()
         );
     }
@@ -1506,7 +1506,7 @@ fn run_init(paths: &GqyPaths, kind: InitKind) -> Result<()> {
 }
 
 /// 首次运行时：若用户知识库为空且随包携带默认 kb 目录（brew 的 share/hilia/kb），
-/// 自动导入，让 `gqy kb search` 开箱即用（幂等：已有内容则跳过）。
+/// 自动导入，让 `hilia kb search` 开箱即用（幂等：已有内容则跳过）。
 fn seed_default_knowledge_base(paths: &GqyPaths, interactive: bool) -> Result<()> {
     let kb_root = paths.data_dir.join("kb");
     let has_content = kb_root.exists()
@@ -1651,8 +1651,8 @@ fn remove_shell_hooks(paths: &GqyPaths) -> Result<()> {
         println!(
             "{}",
             t(
-                "no installed GQY shell hooks found",
-                "未找到已安装的 GQY shell hook"
+                "no installed Hilia shell hooks found",
+                "未找到已安装的希尔娅 shell hook"
             )
         );
     }
@@ -1954,8 +1954,8 @@ fn execute_pop(
                 bail!(
                     "{}",
                     t(
-                        "interactive pop requires a terminal; use `gqy pop <count>`",
-                        "交互 pop 需要终端；请使用 `gqy pop <数量>`",
+                        "interactive pop requires a terminal; use `hilia pop <count>`",
+                        "交互 pop 需要终端；请使用 `hilia pop <数量>`",
                     )
                 );
             }
@@ -2858,7 +2858,7 @@ fn run_balance(paths: &GqyPaths) -> Result<()> {
                 .map(|p| p.id.clone())
                 .unwrap_or_default();
             bail!(
-                "当前 provider（{provider}）没有公开的余额查询接口；目前支持 DeepSeek（gqy config set active_provider deepseek）"
+                "当前 provider（{provider}）没有公开的余额查询接口；目前支持 DeepSeek（hilia config set active_provider deepseek）"
             );
         }
     }
@@ -3407,8 +3407,8 @@ fn run_variant(paths: &GqyPaths, args: VariantArgs) -> Result<()> {
         bail!(
             "{}",
             t(
-                "interactive variant selection requires a terminal; use `gqy variant <name>`",
-                "交互 variant 选择需要终端；请使用 `gqy variant <名称>`",
+                "interactive variant selection requires a terminal; use `hilia variant <name>`",
+                "交互 variant 选择需要终端；请使用 `hilia variant <名称>`",
             )
         );
     }
@@ -3423,7 +3423,7 @@ fn run_variant(paths: &GqyPaths, args: VariantArgs) -> Result<()> {
 
     let config = AppConfig::load_or_default(paths)?;
     let mut client = OpenAiCompatibleClient::from_config(&config, paths)?;
-    match execute_variant(paths, &mut client, selected, "gqy variant")? {
+    match execute_variant(paths, &mut client, selected, "hilia variant")? {
         VariantOutcome::Updated => print_variant_updated(),
         VariantOutcome::Cancelled => {}
         VariantOutcome::Rejected(message) => bail!("{message}"),
@@ -7514,7 +7514,7 @@ mod repl_input_tests {
     #[test]
     fn models_is_the_cli_model_selector() {
         let matches = localized_command()
-            .try_get_matches_from(["gqy", "models", "1"])
+            .try_get_matches_from(["hilia", "models", "1"])
             .unwrap();
         let cli = Cli::from_arg_matches(&matches).unwrap();
 
@@ -7523,7 +7523,7 @@ mod repl_input_tests {
             Some(Command::Models(ModelsArgs { index: Some(1) }))
         ));
         let old_matches = localized_command()
-            .try_get_matches_from(["gqy", "providers"])
+            .try_get_matches_from(["hilia", "providers"])
             .unwrap();
         let old_cli = Cli::from_arg_matches(&old_matches).unwrap();
         assert!(old_cli.command.is_none());
@@ -7532,20 +7532,20 @@ mod repl_input_tests {
 
     #[test]
     fn variant_is_a_cli_subcommand_with_an_optional_name() {
-        let cli = parse_args(["gqy", "variant"].map(OsString::from).to_vec()).unwrap();
+        let cli = parse_args(["hilia", "variant"].map(OsString::from).to_vec()).unwrap();
         assert!(matches!(
             cli.command,
             Some(Command::Variant(VariantArgs { name: None }))
         ));
 
-        let cli = parse_args(["gqy", "variant", "high"].map(OsString::from).to_vec()).unwrap();
+        let cli = parse_args(["hilia", "variant", "high"].map(OsString::from).to_vec()).unwrap();
         assert!(matches!(
             cli.command,
             Some(Command::Variant(VariantArgs { name })) if name.as_deref() == Some("high")
         ));
 
         assert!(parse_args(
-            ["gqy", "variant", "high", "extra"]
+            ["hilia", "variant", "high", "extra"]
                 .map(OsString::from)
                 .to_vec()
         )
@@ -7555,7 +7555,7 @@ mod repl_input_tests {
     #[test]
     fn web_is_a_cli_subcommand_with_local_server_options() {
         let cli = parse_args(
-            ["gqy", "web", "--port", "4100", "--no-open"]
+            ["hilia", "web", "--port", "4100", "--no-open"]
                 .map(OsString::from)
                 .to_vec(),
         )
@@ -7572,7 +7572,7 @@ mod repl_input_tests {
         ));
 
         let cli = parse_args(
-            ["gqy", "web", "--host", "0.0.0.0", "--port", "4100", "--no-open", "-p", "secret"]
+            ["hilia", "web", "--host", "0.0.0.0", "--port", "4100", "--no-open", "-p", "secret"]
                 .map(OsString::from)
                 .to_vec(),
         )
@@ -7588,7 +7588,7 @@ mod repl_input_tests {
             })) if host == "0.0.0.0" && password == "secret"
         ));
 
-        let cli = parse_args(["gqy", "web"].map(OsString::from).to_vec()).unwrap();
+        let cli = parse_args(["hilia", "web"].map(OsString::from).to_vec()).unwrap();
         assert!(matches!(
             cli.command,
             Some(Command::Web(WebArgs {
@@ -7601,7 +7601,7 @@ mod repl_input_tests {
         ));
 
         let cli = parse_args(
-            ["gqy", "web", "-p", "secret", "--no-open"]
+            ["hilia", "web", "-p", "secret", "--no-open"]
                 .map(OsString::from)
                 .to_vec(),
         )
@@ -7616,7 +7616,7 @@ mod repl_input_tests {
         ));
 
         let cli = parse_args(
-            ["gqy", "web", "-p", "--no-open"]
+            ["hilia", "web", "-p", "--no-open"]
                 .map(OsString::from)
                 .to_vec(),
         )
@@ -7633,19 +7633,19 @@ mod repl_input_tests {
 
     #[test]
     fn pop_is_a_cli_subcommand_with_an_optional_count() {
-        let cli = parse_args(["gqy", "pop"].map(OsString::from).to_vec()).unwrap();
+        let cli = parse_args(["hilia", "pop"].map(OsString::from).to_vec()).unwrap();
         assert!(matches!(
             cli.command,
             Some(Command::Pop(PopArgs { count: None }))
         ));
 
-        let cli = parse_args(["gqy", "pop", "3"].map(OsString::from).to_vec()).unwrap();
+        let cli = parse_args(["hilia", "pop", "3"].map(OsString::from).to_vec()).unwrap();
         assert!(matches!(
             cli.command,
             Some(Command::Pop(PopArgs { count: Some(3) }))
         ));
-        assert!(parse_args(["gqy", "pop", "0"].map(OsString::from).to_vec()).is_err());
-        assert!(parse_args(["gqy", "pop", "nope"].map(OsString::from).to_vec()).is_err());
+        assert!(parse_args(["hilia", "pop", "0"].map(OsString::from).to_vec()).is_err());
+        assert!(parse_args(["hilia", "pop", "nope"].map(OsString::from).to_vec()).is_err());
     }
 
     #[test]
@@ -7743,19 +7743,19 @@ mod repl_input_tests {
     #[test]
     fn debug_is_a_global_cli_option() {
         for args in [
-            &["gqy", "--debug", "models", "1"][..],
-            &["gqy", "models", "--debug", "1"][..],
-            &["gqy", "hello", "--debug"][..],
-            &["gqy", "ask", "hello", "--debug"][..],
+            &["hilia", "--debug", "models", "1"][..],
+            &["hilia", "models", "--debug", "1"][..],
+            &["hilia", "hello", "--debug"][..],
+            &["hilia", "ask", "hello", "--debug"][..],
         ] {
             let cli = parse_args(args.iter().map(OsString::from).collect()).unwrap();
             assert!(cli.debug);
         }
 
-        let cli = parse_args(["gqy", "hello", "--debug"].map(OsString::from).to_vec()).unwrap();
+        let cli = parse_args(["hilia", "hello", "--debug"].map(OsString::from).to_vec()).unwrap();
         assert_eq!(cli.message, ["hello"]);
 
-        let cli = parse_args(["gqy", "--", "--debug"].map(OsString::from).to_vec()).unwrap();
+        let cli = parse_args(["hilia", "--", "--debug"].map(OsString::from).to_vec()).unwrap();
         assert!(!cli.debug);
         assert_eq!(cli.message, ["--debug"]);
     }
@@ -8579,7 +8579,7 @@ fn run_history(paths: &GqyPaths, args: HistoryArgs) -> Result<()> {
 }
 
 /// 关键词搜索会话记录：当前会话全部轮次 + 已归档轮次（evicted_turns）。
-/// 只输出命中轮次，不占对话上下文；供 GQY 查「之前干了什么」。
+/// 只输出命中轮次，不占对话上下文；供希尔娅查「之前干了什么」。
 fn run_history_search(
     paths: &GqyPaths,
     state: &StateStore,
@@ -8661,7 +8661,7 @@ fn run_history_search(
 }
 
 /// 记忆定期归档：把超过保留期的可见轮次归档到 evicted_context.db
-/// （不占对话上下文，随时可用 `gqy history --search` 或 recall 检索）。
+/// （不占对话上下文，随时可用 `hilia history --search` 或 recall 检索）。
 /// 返回归档的轮次数。
 pub fn run_archive(paths: &GqyPaths, args: ArchiveArgs) -> Result<()> {
     let config = AppConfig::load(paths)?;
@@ -8986,16 +8986,16 @@ fn run_backup(paths: &GqyPaths, args: BackupArgs) -> Result<()> {
                 println!(
                     "{}",
                     t(
-                        "initialized local Git backup; attach a remote later with `gqy backup remote <url>`",
-                        "已初始化本地 Git 备份；之后可用 `gqy backup remote <url>` 绑定远程"
+                        "initialized local Git backup; attach a remote later with `hilia backup remote <url>`",
+                        "已初始化本地 Git 备份；之后可用 `hilia backup remote <url>` 绑定远程"
                     )
                 );
             } else {
                 println!(
                     "{}",
                     t(
-                        "initialized isolated Git backup; run `gqy backup now` after remote authentication is ready",
-                        "已初始化独立 Git 备份；远程认证就绪后运行 `gqy backup now`"
+                        "initialized isolated Git backup; run `hilia backup now` after remote authentication is ready",
+                        "已初始化独立 Git 备份；远程认证就绪后运行 `hilia backup now`"
                     )
                 );
             }
@@ -9021,8 +9021,8 @@ fn run_backup(paths: &GqyPaths, args: BackupArgs) -> Result<()> {
             println!(
                 "{}",
                 t(
-                    "restored GQY state from the backup remote; re-enter API keys if the restored config redacted them",
-                    "已从备份远程恢复 GQY 状态；若恢复的配置脱敏了密钥，请重新填写"
+                    "restored Hilia state from the backup remote; re-enter API keys if the restored config redacted them",
+                    "已从备份远程恢复希尔娅状态；若恢复的配置脱敏了密钥，请重新填写"
                 )
             );
         }
@@ -9036,8 +9036,8 @@ fn run_backup(paths: &GqyPaths, args: BackupArgs) -> Result<()> {
             println!(
                 "{}",
                 t(
-                    "backup remote updated; next `gqy backup now` will push to it (supports `owner/repo` via gh CLI)",
-                    "备份远程已更新；下一次 `gqy backup now` 将推送到该远程（支持用 gh CLI 传 `owner/repo`）"
+                    "backup remote updated; next `hilia backup now` will push to it (supports `owner/repo` via gh CLI)",
+                    "备份远程已更新；下一次 `hilia backup now` 将推送到该远程（支持用 gh CLI 传 `owner/repo`）"
                 )
             );
         }
@@ -9075,7 +9075,7 @@ fn run_tools(paths: &GqyPaths, args: ToolsArgs) -> Result<()> {
                 }
             }
             println!();
-            println!("判断核心功能后导入：gqy tools import {} --only <候选名,…>", source);
+            println!("判断核心功能后导入：gilia tools import {} --only <候选名,…>", source);
             Ok(())
         }
         ToolsCommand::Import { source, name, only } => {
@@ -9105,7 +9105,7 @@ fn run_tools(paths: &GqyPaths, args: ToolsArgs) -> Result<()> {
         ToolsCommand::List => {
             let packages = crate::tools::import::list_tools(paths)?;
             if packages.is_empty() {
-                println!("暂无已导入的用户工具包（gqy tools import <目录或仓库>）");
+                println!("暂无已导入的用户工具包（gilia tools import <目录或仓库>）");
             }
             for (name, count, license) in packages {
                 println!("{name}: {count} 个工具（{license}）");

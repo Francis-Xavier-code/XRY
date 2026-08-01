@@ -1,4 +1,4 @@
-// 顾清影 · 迷你对话（独立逻辑，非面板缩小版）
+// 希尔娅 · 迷你对话（独立逻辑，非面板缩小版）
 // 输入框发送 → queue API → SSE 流式接收 → 展开回复区
 (() => {
   "use strict";
@@ -151,7 +151,7 @@
   // ── 放大按钮 ──
   expand.addEventListener("click", () => {
     try {
-      window.webkit.messageHandlers.gqyExpand.postMessage("expand");
+      window.open("/", "_blank");
     } catch (_) {
       window.open("/", "_blank");
     }

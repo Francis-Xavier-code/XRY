@@ -819,7 +819,7 @@ fn edit_custom_prompts(
     let mut selected = 0usize;
     loop {
         let persona = if config.prompt.active_persona.trim().is_empty() {
-            "顾清影".to_string()
+            "希尔娅".to_string()
         } else {
             persona_display_name(&config.prompt.active_persona).to_string()
         };
@@ -860,7 +860,7 @@ fn edit_personas(stdout: &mut io::Stdout, paths: &GqyPaths, config: &mut AppConf
         } else {
             "  "
         };
-        options.push(format!("{default_marker}顾清影"));
+        options.push(format!("{default_marker}希尔娅"));
         options.extend(personas.iter().map(|name| {
             let display = persona_display_name(name);
             if *name == config.prompt.active_persona {

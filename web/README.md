@@ -1,6 +1,6 @@
-# GQY WebUI assets
+# 希尔娅 WebUI assets
 
-These static assets are embedded into the GQY Rust binary at build time. Run the local WebUI with:
+These static assets are embedded into the hilia Rust binary at build time. Run the local WebUI with:
 
 ```sh
 cargo run -- web

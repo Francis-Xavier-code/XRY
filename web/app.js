@@ -302,7 +302,7 @@
     themeButton.setAttribute("aria-label", themeButton.title);
     const themeColor = document.querySelector('meta[name="theme-color"]');
     if (themeColor) themeColor.content = selected === "graphite" ? "#111512" : "#f2f5f3";
-    if (persist) safeStorageSet("gqy.web.theme", selected);
+    if (persist) safeStorageSet("hilia.web.theme", selected);
   }
 
   function setMode(mode, persist = true) {
@@ -313,7 +313,7 @@
       button.classList.toggle("active", active);
       button.setAttribute("aria-pressed", String(active));
     });
-    if (persist) safeStorageSet("gqy.web.mode", selected);
+    if (persist) safeStorageSet("hilia.web.mode", selected);
   }
 
   function closeSidebar() {
@@ -346,7 +346,7 @@
   }
 
   // 菜单栏「打开配置」通过 evaluateJavaScript 调用；URL ?open=settings 走 handleOpenSettingsParam
-  window.__gqyOpenSettings = function () {
+  window.__hiliaOpenSettings = function () {
     openSettings();
     if (!state.configLoaded && !state.configLoading) loadConfigDraft();
   };
@@ -1111,7 +1111,7 @@
     active.className = "config-input";
     const defaultOption = document.createElement("option");
     defaultOption.value = "";
-    defaultOption.textContent = kind === "personas" ? "顾清影 默认人格" : "不使用用户身份";
+    defaultOption.textContent = kind === "personas" ? "希尔娅 默认人格" : "不使用用户身份";
     active.appendChild(defaultOption);
     for (const promptDocument of documents) {
       const option = document.createElement("option");
@@ -1314,7 +1314,7 @@
     try {
       response = await fetch(path, { ...options, headers, credentials: "same-origin" });
     } catch (_) {
-      throw new ApiError("无法连接顾清影 WebUI", 0);
+      throw new ApiError("无法连接希尔娅 WebUI", 0);
     }
     if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
     return response;
@@ -1871,8 +1871,8 @@
     else if (inputCount > MAX_CONTENT_CHARS) elements.composerState.textContent = "消息不能超过 20,000 个字符";
     else if (running && !queueAvailable) elements.composerState.textContent = "另一会话正在运行";
     else if (running) elements.composerState.textContent = state.queuedPrompts.length
-      ? `顾清影正在回复 · ${state.queuedPrompts.length} 条排队`
-      : "顾清影正在回复";
+      ? `希尔娅正在回复 · ${state.queuedPrompts.length} 条排队`
+      : "希尔娅正在回复";
     else elements.composerState.textContent = "";
     elements.composerState.classList.toggle("is-error", inputCount > MAX_CONTENT_CHARS);
     updateSettingsControls();
@@ -2373,7 +2373,7 @@
     const imageMime = !mime || mime.startsWith("image/");
     const width = validAssetDimension(source.width);
     const height = validAssetDimension(source.height);
-    const alt = String(source.alt || "").trim() || "顾清影生成的图片";
+    const alt = String(source.alt || "").trim() || "希尔娅生成的图片";
     const hideCaption = Boolean(source.hide_caption);
 
     const figure = document.createElement("figure");
@@ -2540,12 +2540,12 @@
     const header = document.createElement("header");
     header.className = "assistant-label";
     const avatar = document.createElement("img");
-    avatar.src = "/assets/gqy-logo.png";
+    avatar.src = "/assets/hilia-logo.png";
     avatar.alt = "";
     avatar.setAttribute("aria-hidden", "true");
     const identity = document.createElement("div");
     const name = document.createElement("strong");
-    name.textContent = "顾清影";
+    name.textContent = "希尔娅";
     const time = document.createElement("span");
     time.textContent = formatTime(timestamp) || "";
     time.title = formatDateTime(timestamp);
@@ -2894,12 +2894,12 @@
     const header = document.createElement("header");
     header.className = "assistant-label";
     const avatar = document.createElement("img");
-    avatar.src = "/assets/gqy-logo.png";
+    avatar.src = "/assets/hilia-logo.png";
     avatar.alt = "";
     avatar.setAttribute("aria-hidden", "true");
     const identity = document.createElement("div");
     const name = document.createElement("strong");
-    name.textContent = "顾清影";
+    name.textContent = "希尔娅";
     const status = document.createElement("span");
     status.className = "live-indicator";
     status.textContent = "正在回复";
@@ -2985,7 +2985,7 @@
     reasoning.pendingTitle = normalizeReasoningTitle(live.reasoningTitle);
     if (mode !== "hidden") {
       live.blocks.appendChild(reasoning.element);
-      // 思考中：头像呼吸动画（顾清影「带着头像思考」）
+      // 思考中：头像呼吸动画（希尔娅「带着头像思考」）
       const article = live.blocks.closest(".assistant-message");
       if (article) article.classList.add("is-thinking");
     }
@@ -4200,7 +4200,7 @@
     elements.timeline.hidden = true;
     elements.emptyState.hidden = true;
     elements.blockedState.hidden = false;
-    elements.blockedTitle.textContent = unauthorized ? "登录顾清影" : "无法载入顾清影 WebUI";
+    elements.blockedTitle.textContent = unauthorized ? "登录希尔娅" : "无法载入希尔娅 WebUI";
     elements.blockedMessage.textContent = unauthorized ? "输入访问密码以继续。" : message || "本地服务暂时无法访问";
     elements.loginForm.hidden = !unauthorized;
     elements.retryBootstrapButton.hidden = unauthorized;
@@ -4503,7 +4503,7 @@
     window.requestAnimationFrame(() => elements.resetCancelButton.focus());
   }
 
-  // 菜单栏「打开配置」通过 ?open=settings 直达设置抽屉（等价终端 gqy config 的 GUI 版）
+  // 菜单栏「打开配置」通过 ?open=settings 直达设置抽屉（等价终端 hilia config 的 GUI 版）
   function handleOpenSettingsParam() {
     const open = new URLSearchParams(location.search).get("open");
     if (open === "settings") {
@@ -4652,13 +4652,13 @@
     elements.sidebarCollapseButton?.addEventListener("click", () => {
       const collapsed = elements.body.dataset.sidebarCollapsed === "1";
       elements.body.dataset.sidebarCollapsed = collapsed ? "" : "1";
-      safeStorageSet("gqy.web.sidebarCollapsed", !collapsed);
+      safeStorageSet("hilia.web.sidebarCollapsed", !collapsed);
       elements.sidebarCollapseButton.title = collapsed ? "折叠会话栏" : "展开会话栏";
       elements.sidebarCollapseButton.setAttribute("aria-label", elements.sidebarCollapseButton.title);
       elements.sidebarCollapseButton.querySelector("[data-icon]")?.replaceChildren(createIcon(collapsed ? "panel-left-close" : "panel-left-open"));
     });
     // 恢复持久化的折叠状态
-    if (safeStorageGet("gqy.web.sidebarCollapsed") === "true") {
+    if (safeStorageGet("hilia.web.sidebarCollapsed") === "true") {
       elements.body.dataset.sidebarCollapsed = "1";
       elements.sidebarCollapseButton.title = "展开会话栏";
       elements.sidebarCollapseButton.setAttribute("aria-label", "展开会话栏");
@@ -4745,8 +4745,8 @@
 
   function initialize() {
     renderIconSlots();
-    setTheme(safeStorageGet("gqy.web.theme") || "graphite", false);
-    setMode(safeStorageGet("gqy.web.mode") || "normal", false);
+    setTheme(safeStorageGet("hilia.web.theme") || "graphite", false);
+    setMode(safeStorageGet("hilia.web.mode") || "normal", false);
     setSettingsView("interface");
     bindEvents();
     resizeComposer();

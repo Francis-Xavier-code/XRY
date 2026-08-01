@@ -58,7 +58,7 @@ const MINI_HTML: &str = include_str!("../web/mini.html");
 const MINI_CSS: &str = include_str!("../web/mini.css");
 const MINI_JS: &str = include_str!("../web/mini.js");
 const HILIA_LOGO: &[u8] = include_bytes!("../pics/Hilia-avatar.png");
-const GQY_WALLPAPER: &[u8] = include_bytes!("../pics/Hilia-image.png");
+const HILIA_WALLPAPER: &[u8] = include_bytes!("../pics/Hilia-image.png");
 const PROVIDER_ICONS: &str = include_str!("../web/assets/provider-icons.svg");
 
 #[derive(Clone)]
@@ -1037,7 +1037,7 @@ async fn logo_asset() -> Response {
 }
 
 async fn wallpaper_asset() -> Response {
-    binary_asset(GQY_WALLPAPER, "image/png")
+    binary_asset(HILIA_WALLPAPER, "image/png")
 }
 
 async fn provider_icons_asset() -> Response {

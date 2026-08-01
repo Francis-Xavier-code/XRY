@@ -37,6 +37,7 @@ const GRADIENT: [[u8; 3]; 5] = [
 ];
 
 const SLOGAN: &str = "希尔娅 · 活在 Windows 里的 AI 助理";
+const DEV_LINE: &str = concat!("v", env!("CARGO_PKG_VERSION"), " · 开发者：2101497063@qq.com");
 
 pub fn print_if_supported(out: &mut impl Write) {
     let _ = print_hilia_logo(out);
@@ -68,7 +69,12 @@ fn print_hilia_logo(out: &mut impl Write) -> std::io::Result<()> {
     // 标语行：柔和的灰色小字
     writeln!(
         out,
-        "\x1b[38;2;148;163;184m{SLOGAN}\x1b[0m\n"
+        "\x1b[38;2;148;163;184m{SLOGAN}\x1b[0m"
+    )?;
+    // 开发者行：更淡的灰
+    writeln!(
+        out,
+        "\x1b[38;2;120;132;150m{DEV_LINE}\x1b[0m\n"
     )?;
     Ok(())
 }
