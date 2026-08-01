@@ -423,6 +423,7 @@ impl CreditsDb {
             "qq" => "s.qq_id",
             "wecom" => "s.wecom_id",
             "feishu" => "s.feishu_id",
+            "apk" => "s.apk_id",
             _ => return Ok(None),
         };
         let conn = self.conn.lock().unwrap();

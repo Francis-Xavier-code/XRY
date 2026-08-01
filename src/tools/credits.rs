@@ -19,6 +19,8 @@ use serde_json::{json, Value};
 #[derive(Debug, Clone)]
 enum Role {
     Admin,
+    /// 班级职位人员（班长/学委等）：可填写学分申报
+    Officer { student: StudentRow, title: String },
     Student(Option<StudentRow>),
 }
 
@@ -39,16 +41,35 @@ fn current_role(paths: &GqyPaths) -> Role {
         Ok(db) => db,
         Err(_) => return Role::Student(None),
     };
-    match db.find_student_by_platform(&identity.platform, &identity.user_id) {
-        Ok(Some(student)) => Role::Student(Some(student)),
-        _ => Role::Student(None),
+    // APK 辅导员设备：用管理员激活码确认过身份
+    if identity.platform == "apk" && db.is_admin_device(&identity.user_id).unwrap_or(false) {
+        return Role::Admin;
     }
+    let student = match db.find_student_by_platform(&identity.platform, &identity.user_id) {
+        Ok(Some(student)) => student,
+        _ => return Role::Student(None),
+    };
+    // 班级职位人员（班长/学委/团支书…）→ 可填写学分申报
+    if let Ok(Some(role)) = db.find_role_by_student(student.id) {
+        return Role::Officer {
+            student,
+            title: role.title,
+        };
+    }
+    Role::Student(Some(student))
 }
 
 fn require_admin(role: &Role) -> Result<()> {
     match role {
         Role::Admin => Ok(()),
         _ => bail!("该操作需要管理员（辅导员）权限；学生只能查询自己的信息"),
+    }
+}
+
+fn require_officer(role: &Role) -> Result<()> {
+    match role {
+        Role::Admin | Role::Officer { .. } => Ok(()),
+        _ => bail!("只有班级职位人员（如班长）才能填写学分申报"),
     }
 }
 
@@ -318,7 +339,7 @@ async fn credit_query(args: Value, paths: GqyPaths) -> Result<String> {
             text.push_str(&render_records(&records));
             Ok(ok(text))
         }
-        Role::Student(Some(student)) => {
+        Role::Student(Some(student)) | Role::Officer { student, .. } => {
             let records = db.query_credits(Some(student.id), None, None, "", "")?;
             let summary = db.summary(Some(student.id), None)?;
             let mut text = format!(
@@ -436,7 +457,7 @@ async fn student_query(args: Value, paths: GqyPaths) -> Result<String> {
             }
             Ok(ok(lines.join("\n")))
         }
-        Role::Student(Some(student)) => {
+        Role::Student(Some(student)) | Role::Officer { student, .. } => {
             let summary = db.summary(Some(student.id), None)?;
             Ok(ok(format!(
                 "{}（{}）｜{}｜电话 {}｜总学分 {}",
@@ -474,6 +495,19 @@ async fn student_bind(args: Value, paths: GqyPaths) -> Result<String> {
     };
     if student.name != name {
         return Ok(fail(&format!("姓名与学号不匹配（{} ≠ {}），请核对后重试", student.name, name)));
+    }
+    if identity.platform == "apk" {
+        // APK 设备绑定（存 apk_id 列）
+        if let Some(existing) = db.find_student_by_apk(&identity.user_id)? {
+            if existing.id != student.id {
+                return Ok(fail("该 APK 设备已绑定其他学号，请联系辅导员处理"));
+            }
+        }
+        db.bind_student_apk(student.id, &identity.user_id)?;
+        return Ok(ok(format!(
+            "绑定成功：{}（{}）已绑定当前 App。以后可以直接发消息查学分。",
+            student.name, student.student_no
+        )));
     }
     let (current, qq, wecom, feishu) = match identity.platform.as_str() {
         "qq" => (student.qq_id.clone(), Some(identity.user_id.as_str()), None, None),
@@ -1002,4 +1036,586 @@ pub fn register(registry: &mut ToolRegistry, paths: GqyPaths) {
             async move { credits_import(args, paths).await }
         },
     ));
+
+    // ─────────── APK 对接扩展：班级职位 / 问卷申报 / 审批 ───────────
+
+    let paths_for_tool_17 = paths.clone();
+    registry.register(ToolSpec::new(
+        "role_add",
+        t(
+            "Add a class officer role (admin only), e.g. 班长/学委/团支书. Binds a student to a class + title. Officers can submit credit applications from the App.",
+            "新增班级职位（仅辅导员可用），如 班长/学委/团支书。将学生绑定到班级与职位。职位人员可在 App 上填写学分申报。",
+        ),
+        json!({
+            "type": "object",
+            "properties": {
+                "class_name": {"type": "string", "description": t("Class name.", "班级名称。")},
+                "title": {"type": "string", "description": t("Role title, e.g. 班长.", "职位名称，如 班长。")},
+                "student_no": {"type": "string", "description": t("Student number to bind.", "要绑定的学号。")},
+                "note": {"type": "string", "description": t("Optional note.", "备注（可选）。")}
+            },
+            "required": ["class_name", "title"],
+            "additionalProperties": false
+        }),
+        move |args| {
+            let paths = paths_for_tool_17.clone();
+            async move { role_add(args, paths).await }
+        },
+    ));
+
+    let paths_for_tool_18 = paths.clone();
+    registry.register(ToolSpec::new(
+        "role_update",
+        t(
+            "Update a class officer role (admin only): change title or rebind a different student.",
+            "修改班级职位（仅辅导员可用）：改职位名称或换绑学生。",
+        ),
+        json!({
+            "type": "object",
+            "properties": {
+                "role_id": {"type": "integer", "description": t("Role id.", "职位 ID。")},
+                "title": {"type": "string", "description": t("New role title.", "新职位名称。")},
+                "student_no": {"type": "string", "description": t("New student number, or empty to unbind.", "新学号（留空=解除绑定）。")},
+                "note": {"type": "string", "description": t("Optional note.", "备注（可选）。")}
+            },
+            "required": ["role_id"],
+            "additionalProperties": false
+        }),
+        move |args| {
+            let paths = paths_for_tool_18.clone();
+            async move { role_update(args, paths).await }
+        },
+    ));
+
+    let paths_for_tool_19 = paths.clone();
+    registry.register(ToolSpec::new(
+        "role_delete",
+        t(
+            "Delete a class officer role (admin only).",
+            "删除班级职位（仅辅导员可用）。",
+        ),
+        json!({
+            "type": "object",
+            "properties": {
+                "role_id": {"type": "integer", "description": t("Role id.", "职位 ID。")}
+            },
+            "required": ["role_id"],
+            "additionalProperties": false
+        }),
+        move |args| {
+            let paths = paths_for_tool_19.clone();
+            async move { role_delete(args, paths).await }
+        },
+    ));
+
+    let paths_for_tool_20 = paths.clone();
+    registry.register(ToolSpec::new(
+        "role_query",
+        t(
+            "List class officer roles, optionally filtered by class.",
+            "列出班级职位（可按班级过滤）。",
+        ),
+        json!({
+            "type": "object",
+            "properties": {
+                "class_name": {"type": "string", "description": t("Filter by class name.", "按班级名称过滤。")}
+            },
+            "additionalProperties": false
+        }),
+        move |args| {
+            let paths = paths_for_tool_20.clone();
+            async move { role_query(args, paths).await }
+        },
+    ));
+
+    let paths_for_tool_21 = paths.clone();
+    registry.register(ToolSpec::new(
+        "credit_apply",
+        t(
+            "Submit a credit application (class officers only, e.g. 班长). The application stays pending until the advisor approves it. Evidence photos (base64, up to 3) are optional but recommended.",
+            "提交学分申报（仅班级职位人员可用，如 班长）。申报为待审批状态，辅导员通过后才计入学分。证据照片（base64，最多 3 张）可选但建议提供。",
+        ),
+        json!({
+            "type": "object",
+            "properties": {
+                "type_name": {"type": "string", "description": t("Credit type name (e.g. 志愿公益).", "学分类型名称（如 志愿公益）。")},
+                "points": {"type": "number", "description": t("Points applied for (positive).", "申报分值（正数）。")},
+                "description": {"type": "string", "description": t("What happened, when, organizer, etc.", "事项说明：活动内容、时间、组织方等。")},
+                "evidence": {"type": "array", "description": t("Evidence photos as base64: [{\"name\": \"a.jpg\", \"data\": \"<base64>\"}]. Max 3, each ~1MB.", "证据照片 base64 数组：[{\"name\":\"a.jpg\",\"data\":\"<base64>\"}]，最多 3 张，每张约 1MB。"), "items": {"type": "object"}}
+            },
+            "required": ["type_name", "points"],
+            "additionalProperties": false
+        }),
+        move |args| {
+            let paths = paths_for_tool_21.clone();
+            async move { credit_apply(args, paths).await }
+        },
+    ));
+
+    let paths_for_tool_22 = paths.clone();
+    registry.register(ToolSpec::new(
+        "credit_submissions_query",
+        t(
+            "List credit applications (admin only), filtered by status/class/date range. Each submission shows student, type, points, description, evidence files, review note.",
+            "查询学分申报列表（仅辅导员可用），可按状态/班级/日期范围过滤。每条含学生、类型、分值、说明、证据文件、审批意见。",
+        ),
+        json!({
+            "type": "object",
+            "properties": {
+                "status": {"type": "string", "description": t("Filter: pending / approved / rejected (empty = all).", "状态过滤：pending / approved / rejected（留空=全部）。")},
+                "class_name": {"type": "string", "description": t("Filter by class name.", "按班级名称过滤。")},
+                "date_from": {"type": "string", "description": t("Start date (inclusive), e.g. 2026-08-01.", "开始日期（含），如 2026-08-01。")},
+                "date_to": {"type": "string", "description": t("End date (inclusive), e.g. 2026-08-31.", "结束日期（含），如 2026-08-31。")}
+            },
+            "additionalProperties": false
+        }),
+        move |args| {
+            let paths = paths_for_tool_22.clone();
+            async move { credit_submissions_query(args, paths).await }
+        },
+    ));
+
+    let paths_for_tool_23 = paths.clone();
+    registry.register(ToolSpec::new(
+        "credit_approve",
+        t(
+            "Approve a pending credit application (admin only): the points become an official credit record.",
+            "通过待审批的学分申报（仅辅导员可用）：分值计入正式学分记录。",
+        ),
+        json!({
+            "type": "object",
+            "properties": {
+                "submission_id": {"type": "integer", "description": t("Application id.", "申报 ID。")},
+                "review_note": {"type": "string", "description": t("Optional review note.", "审批意见（可选）。")}
+            },
+            "required": ["submission_id"],
+            "additionalProperties": false
+        }),
+        move |args| {
+            let paths = paths_for_tool_23.clone();
+            async move { credit_approve(args, paths).await }
+        },
+    ));
+
+    let paths_for_tool_24 = paths.clone();
+    registry.register(ToolSpec::new(
+        "credit_reject",
+        t(
+            "Reject a pending credit application (admin only) with a reason.",
+            "驳回待审批的学分申报（仅辅导员可用），需附理由。",
+        ),
+        json!({
+            "type": "object",
+            "properties": {
+                "submission_id": {"type": "integer", "description": t("Application id.", "申报 ID。")},
+                "review_note": {"type": "string", "description": t("Rejection reason.", "驳回理由。")}
+            },
+            "required": ["submission_id"],
+            "additionalProperties": false
+        }),
+        move |args| {
+            let paths = paths_for_tool_24.clone();
+            async move { credit_reject(args, paths).await }
+        },
+    ));
+
+    let paths_for_tool_25 = paths.clone();
+    registry.register(ToolSpec::new(
+        "credit_submissions_summary",
+        t(
+            "Summarize credit applications (admin only) in a date range, grouped by class and credit type. Use this when the advisor asks to summarize today's/recent submissions.",
+            "汇总某一日期区间的学分申报（仅辅导员可用），按班级与学分类型分组。辅导员问\"总结今天/最近的提交情况\"时调用此工具。",
+        ),
+        json!({
+            "type": "object",
+            "properties": {
+                "date_from": {"type": "string", "description": t("Start date (inclusive), e.g. 2026-08-01. Default: today.", "开始日期（含），如 2026-08-01。默认今天。")},
+                "date_to": {"type": "string", "description": t("End date (inclusive), e.g. 2026-08-31. Default: today.", "结束日期（含），如 2026-08-31。默认今天。")}
+            },
+            "additionalProperties": false
+        }),
+        move |args| {
+            let paths = paths_for_tool_25.clone();
+            async move { credit_submissions_summary(args, paths).await }
+        },
+    ));
+}
+
+// ─────────────────────────── 班级职位 / 问卷申报 / 审批 ───────────────────────────
+
+/// 证据照片落盘（工具与直连/中继 REST 共用）：data_dir/evidence/<id>_<n>.<ext>。
+pub(crate) fn save_evidence_files(
+    paths: &GqyPaths,
+    submission_id: i64,
+    evidence: &[Value],
+) -> Result<Vec<Value>> {
+    let evidence_dir = paths.data_dir.join("evidence");
+    std::fs::create_dir_all(&evidence_dir)?;
+    let mut saved = Vec::new();
+    for (index, item) in evidence.iter().enumerate().take(3) {
+        let name = item.get("name").and_then(Value::as_str).unwrap_or("photo");
+        let data = item.get("data").and_then(Value::as_str).unwrap_or("");
+        if data.is_empty() {
+            continue;
+        }
+        let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, data)
+            .map_err(|error| anyhow::anyhow!("图片解码失败：{error}"))?;
+        let extension = std::path::Path::new(name)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("jpg")
+            .to_ascii_lowercase();
+        let file_name = format!("{submission_id}_{}.{extension}", index + 1);
+        std::fs::write(evidence_dir.join(&file_name), bytes)?;
+        saved.push(json!({"name": name, "file": file_name}));
+    }
+    Ok(saved)
+}
+
+async fn role_add(args: Value, paths: GqyPaths) -> Result<String> {
+    let role = current_role(&paths);
+    if let Err(err) = require_admin(&role) {
+        return Ok(fail(&err.to_string()));
+    }
+    let db = open_db(&paths)?;
+    let class_name = match arg_str(&args, "class_name") {
+        Some(value) => value.to_string(),
+        None => return Ok(fail("需要提供班级名称（class_name）")),
+    };
+    let title = match arg_str(&args, "title") {
+        Some(value) => value.to_string(),
+        None => return Ok(fail("需要提供职位名称（title）")),
+    };
+    let Some((class_id, _)) = db.find_class_by_name(&class_name)? else {
+        return Ok(fail(&format!("班级 {class_name} 不存在")));
+    };
+    let student_id = match arg_str(&args, "student_no") {
+        Some(no) => match db.find_student_by_no(no)? {
+            Some(student) => Some(student.id),
+            None => return Ok(fail(&format!("学号 {no} 不存在（可先 student_add 建档）"))),
+        },
+        None => None,
+    };
+    let note = arg_str(&args, "note").unwrap_or("").to_string();
+    match db.role_add(class_id, &title, student_id, &note) {
+        Ok(id) => {
+            let bound = match student_id {
+                Some(sid) => match db.find_student_by_id(sid)? {
+                    Some(student) => format!("{}（{}）", student.name, student.student_no),
+                    None => "（未绑定）".to_string(),
+                },
+                None => "（未绑定）".to_string(),
+            };
+            Ok(ok(format!(
+                "已新增职位「{title}」（{class_name}）→ {bound}（职位 ID={id}）"
+            )))
+        }
+        Err(err) => Ok(fail(&err.to_string())),
+    }
+}
+
+async fn role_update(args: Value, paths: GqyPaths) -> Result<String> {
+    let role = current_role(&paths);
+    if let Err(err) = require_admin(&role) {
+        return Ok(fail(&err.to_string()));
+    }
+    let db = open_db(&paths)?;
+    let role_id = match args.get("role_id").and_then(Value::as_i64) {
+        Some(id) => id,
+        None => return Ok(fail("需要提供职位 ID（role_id）")),
+    };
+    let title = arg_str(&args, "title");
+    // student_no 存在且为空串 → 解绑；非空 → 换绑；缺失 → 不变
+    let student_id = match args.get("student_no") {
+        Some(Value::String(value)) if value.trim().is_empty() => Some(None),
+        Some(Value::String(value)) => match db.find_student_by_no(value)? {
+            Some(student) => Some(Some(student.id)),
+            None => return Ok(fail(&format!("学号 {} 不存在", value.trim()))),
+        },
+        _ => None,
+    };
+    let note = arg_str(&args, "note");
+    if title.is_none() && student_id.is_none() && note.is_none() {
+        return Ok(fail("没有要修改的内容（title / student_no / note 至少一个）"));
+    }
+    match db.role_update(role_id, title, student_id, note) {
+        Ok(()) => Ok(ok(format!("职位已更新（ID={role_id}）"))),
+        Err(err) => Ok(fail(&err.to_string())),
+    }
+}
+
+async fn role_delete(args: Value, paths: GqyPaths) -> Result<String> {
+    let role = current_role(&paths);
+    if let Err(err) = require_admin(&role) {
+        return Ok(fail(&err.to_string()));
+    }
+    let role_id = match args.get("role_id").and_then(Value::as_i64) {
+        Some(id) => id,
+        None => return Ok(fail("需要提供职位 ID（role_id）")),
+    };
+    let db = open_db(&paths)?;
+    match db.role_delete(role_id) {
+        Ok(()) => Ok(ok(format!("职位已删除（ID={role_id}）"))),
+        Err(err) => Ok(fail(&err.to_string())),
+    }
+}
+
+async fn role_query(args: Value, paths: GqyPaths) -> Result<String> {
+    let db = open_db(&paths)?;
+    let class_id = match arg_str(&args, "class_name") {
+        Some(name) => match db.find_class_by_name(name)? {
+            Some((id, _)) => Some(id),
+            None => return Ok(fail(&format!("班级 {name} 不存在"))),
+        },
+        None => None,
+    };
+    let roles = db.list_roles(class_id)?;
+    if roles.is_empty() {
+        return Ok(ok("当前没有班级职位。".to_string()));
+    }
+    let mut lines = Vec::new();
+    for role_row in roles {
+        let bound = match (&role_row.student_no, &role_row.student_name) {
+            (Some(no), Some(name)) => format!("{name}（{no}）"),
+            _ => "（未绑定）".to_string(),
+        };
+        lines.push(format!(
+            "- {} / {}：{bound}（ID={}）{}",
+            role_row.class_name,
+            role_row.title,
+            role_row.id,
+            if role_row.note.is_empty() {
+                String::new()
+            } else {
+                format!(" · {}", role_row.note)
+            }
+        ));
+    }
+    Ok(ok(lines.join("\n")))
+}
+
+async fn credit_apply(args: Value, paths: GqyPaths) -> Result<String> {
+    let role = current_role(&paths);
+    if let Err(err) = require_officer(&role) {
+        return Ok(fail(&err.to_string()));
+    }
+    let db = open_db(&paths)?;
+    // 职位人员：本人申报；管理员：可替指定学生申报（需 student_no）
+    let student = match &role {
+        Role::Officer { student, .. } => student.clone(),
+        Role::Admin => {
+            let student = match student_from_args(&db, &args) {
+                Ok(student) => student,
+                Err(err) => return Ok(fail(&err.to_string())),
+            };
+            student
+        }
+        _ => return Ok(fail("只有班级职位人员（如班长）才能填写学分申报")),
+    };
+    let points = match args.get("points").and_then(Value::as_f64) {
+        Some(value) if value > 0.0 => value,
+        _ => return Ok(fail("points 必须是正数（申报加分）")),
+    };
+    let type_id = match type_id_from_args(&db, &args) {
+        Ok(id) => id,
+        Err(err) => return Ok(fail(&err.to_string())),
+    };
+    let description = arg_str(&args, "description").unwrap_or("").to_string();
+    let evidence: Vec<Value> = args
+        .get("evidence")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let submission_id = match db.add_submission(student.id, type_id, points, &description, "") {
+        Ok(id) => id,
+        Err(err) => return Ok(fail(&err.to_string())),
+    };
+    let mut saved = Vec::new();
+    if !evidence.is_empty() {
+        match save_evidence_files(&paths, submission_id, &evidence) {
+            Ok(files) => {
+                saved = files;
+                if let Err(err) = db.set_submission_evidence(
+                    submission_id,
+                    &serde_json::to_string(&saved).unwrap_or_default(),
+                ) {
+                    return Ok(fail(&format!("证据记录失败：{err}")));
+                }
+            }
+            Err(err) => return Ok(fail(&format!("证据保存失败：{err}"))),
+        }
+    }
+    let type_name = match type_id {
+        Some(id) => db
+            .find_credit_type_by_id(id)
+            .ok()
+            .flatten()
+            .map(|(_, name, _)| name)
+            .unwrap_or_default(),
+        None => String::new(),
+    };
+    let student_name = student.name.clone();
+    let student_no = student.student_no.clone();
+    Ok(ok(format!(
+        "申报已提交（{student_name} 学号 {student_no}）：{type_name} +{points} 分{}\n状态：待辅导员审批{}",
+        if description.is_empty() { String::new() } else { format!("（{description}）") },
+        if saved.is_empty() { String::new() } else { format!("，已附 {} 张证据照片", saved.len()) }
+    )))
+}
+
+async fn credit_submissions_query(args: Value, paths: GqyPaths) -> Result<String> {
+    let role = current_role(&paths);
+    if let Err(err) = require_admin(&role) {
+        return Ok(fail(&err.to_string()));
+    }
+    let db = open_db(&paths)?;
+    let status = arg_str(&args, "status").map(str::to_string);
+    let class_id = match arg_str(&args, "class_name") {
+        Some(name) => match db.find_class_by_name(name)? {
+            Some((id, _)) => Some(id),
+            None => return Ok(fail(&format!("班级 {name} 不存在"))),
+        },
+        None => None,
+    };
+    let date_from = arg_str(&args, "date_from").map(|d| format!("{d}T00:00:00Z"));
+    let date_to = arg_str(&args, "date_to").map(|d| format!("{d}T23:59:59Z"));
+    let submissions = db.list_submissions(
+        status.as_deref(),
+        class_id,
+        None,
+        date_from.as_deref(),
+        date_to.as_deref(),
+    )?;
+    if submissions.is_empty() {
+        return Ok(ok("没有符合条件的学分申报。".to_string()));
+    }
+    let status_label = |status: &str| match status {
+        "approved" => "✅ 已通过",
+        "rejected" => "❌ 已驳回",
+        _ => "⏳ 待审批",
+    };
+    let mut lines = Vec::new();
+    for submission in submissions {
+        let class = submission.class_name.as_deref().unwrap_or("未分班");
+        let type_name = submission.type_name.as_deref().unwrap_or("未分类");
+        let mut line = format!(
+            "#{} {}（{}）{}班：{type_name} +{} 分 {}",
+            submission.id,
+            submission.student_name,
+            submission.student_no,
+            class,
+            submission.points,
+            status_label(&submission.status)
+        );
+        if !submission.description.is_empty() {
+            line.push_str(&format!("｜{}", submission.description));
+        }
+        if submission.status != "pending" && !submission.review_note.is_empty() {
+            line.push_str(&format!("｜意见：{}", submission.review_note));
+        }
+        lines.push(line);
+    }
+    Ok(ok(format!(
+        "共 {} 条申报：\n{}",
+        lines.len(),
+        lines.join("\n")
+    )))
+}
+
+async fn credit_approve(args: Value, paths: GqyPaths) -> Result<String> {
+    let role = current_role(&paths);
+    if let Err(err) = require_admin(&role) {
+        return Ok(fail(&err.to_string()));
+    }
+    let submission_id = match args.get("submission_id").and_then(Value::as_i64) {
+        Some(id) => id,
+        None => return Ok(fail("需要提供申报 ID（submission_id）")),
+    };
+    let review_note = arg_str(&args, "review_note").unwrap_or("").to_string();
+    let db = open_db(&paths)?;
+    match db.approve_submission(submission_id, &review_note, "辅导员") {
+        Ok(()) => {
+            let submission = db.find_submission(submission_id)?.unwrap_or_else(|| {
+                panic!("approve 成功但查不到申报 {submission_id}")
+            });
+            let type_name = submission.type_name.as_deref().unwrap_or("").to_string();
+            Ok(ok(format!(
+                "已通过申报 #{}：{}（{}）{} +{} 分 → 已计入正式学分",
+                submission.id,
+                submission.student_name,
+                submission.student_no,
+                type_name,
+                submission.points,
+            )))
+        }
+        Err(err) => Ok(fail(&err.to_string())),
+    }
+}
+
+async fn credit_reject(args: Value, paths: GqyPaths) -> Result<String> {
+    let role = current_role(&paths);
+    if let Err(err) = require_admin(&role) {
+        return Ok(fail(&err.to_string()));
+    }
+    let submission_id = match args.get("submission_id").and_then(Value::as_i64) {
+        Some(id) => id,
+        None => return Ok(fail("需要提供申报 ID（submission_id）")),
+    };
+    let review_note = arg_str(&args, "review_note").unwrap_or("").to_string();
+    let db = open_db(&paths)?;
+    match db.reject_submission(submission_id, &review_note) {
+        Ok(()) => Ok(ok(format!(
+            "已驳回申报 #{submission_id}{}",
+            if review_note.is_empty() {
+                String::new()
+            } else {
+                format!("（理由：{review_note}）")
+            }
+        ))),
+        Err(err) => Ok(fail(&err.to_string())),
+    }
+}
+
+async fn credit_submissions_summary(args: Value, paths: GqyPaths) -> Result<String> {
+    let role = current_role(&paths);
+    if let Err(err) = require_admin(&role) {
+        return Ok(fail(&err.to_string()));
+    }
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let date_from = arg_str(&args, "date_from")
+        .unwrap_or(&today)
+        .to_string();
+    let date_to = arg_str(&args, "date_to").unwrap_or(&today).to_string();
+    let db = open_db(&paths)?;
+    let summary = db.submissions_summary(
+        Some(&format!("{date_from}T00:00:00Z")),
+        Some(&format!("{date_to}T23:59:59Z")),
+    )?;
+    if summary.is_empty() {
+        return Ok(ok(format!(
+            "{date_from} 至 {date_to} 没有学分申报记录。"
+        )));
+    }
+    let mut lines = vec![format!("{date_from} 至 {date_to} 学分申报汇总：")];
+    let mut totals = (0i64, 0i64, 0i64, 0.0f64);
+    for row in &summary {
+        let class = row.class_name.as_deref().unwrap_or("未分班");
+        let type_name = row.type_name.as_deref().unwrap_or("未分类");
+        lines.push(format!(
+            "- {class}｜{type_name}：待审批 {} 条、已通过 {} 条、已驳回 {} 条、通过学分 {} 分",
+            row.pending, row.approved, row.rejected, row.total_points
+        ));
+        totals.0 += row.pending;
+        totals.1 += row.approved;
+        totals.2 += row.rejected;
+        totals.3 += row.total_points;
+    }
+    lines.push(format!(
+        "合计：待审批 {} 条、已通过 {} 条、已驳回 {} 条、通过学分 {} 分",
+        totals.0, totals.1, totals.2, totals.3
+    ));
+    if totals.0 > 0 {
+        lines.push("提示：还有待审批申报，可在面板「学分管理 → 申报审批」处理，或让我（AI）逐个查看。".to_string());
+    }
+    Ok(ok(lines.join("\n")))
 }

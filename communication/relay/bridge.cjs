@@ -110,10 +110,52 @@ async function notifyPanel(code, apkLabel, apkDeviceId) {
   }
 }
 
-/** 处理来自 APK 的消息：转 hilia ask，回复经中继返回。 */
+/** 面板本地 API（带密码时自动登录拿 cookie）。 */
+async function panelPost(path, payload) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (PANEL_PASSWORD) {
+    const login = await fetch('http://127.0.0.1:4096/api/auth/login', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ password: PANEL_PASSWORD }),
+    });
+    const cookie = login.headers.get('set-cookie') || '';
+    if (cookie) headers['Cookie'] = cookie.split(';')[0];
+  }
+  const res = await fetch(`http://127.0.0.1:4096${path}`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(payload),
+  });
+  return res;
+}
+
+/** 结构化消息（申报/审批/管理员确认等）→ 面板统一入口，与直连路径共用逻辑。 */
+async function dispatchMobile(from, body) {
+  try {
+    const res = await panelPost('/api/mobile/dispatch', { device_id: from, body });
+    const data = await res.json().catch(() => null);
+    if (data && data.reply) return String(data.reply);
+    return `出错了：${(data && data.error) || `HTTP ${res.status}`}`;
+  } catch (e) {
+    return `调用出错：${e.message}`;
+  }
+}
+
+/** 处理来自 APK 的消息：结构化消息走面板统一入口，文本转 hilia ask，回复经中继返回。 */
 async function handleApkMessage(msg) {
   const from = String(msg.from || '');
   const body = msg.body || {};
+  const kind = String(body.kind || '');
+  if (kind && kind !== 'text' && kind !== 'question') {
+    // 结构化消息（credit_apply / admin_auth / credit_approve ...）
+    log(LOG_FILE, `APK ${from} 结构化消息: ${kind}`);
+    const reply = await dispatchMobile(from, body);
+    for (const part of splitReply(reply, 4000)) {
+      sendToRelay({ type: 'message', to: from, msg_id: msg.msg_id, body: { reply: part } });
+    }
+    return;
+  }
   const question = String(body.text || body.question || '');
   if (!question) {
     sendToRelay({ type: 'message', to: from, msg_id: msg.msg_id, body: { reply: '（收到空消息）' } });
