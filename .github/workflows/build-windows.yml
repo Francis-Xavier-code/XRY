@@ -42,7 +42,7 @@ jobs:
 
       - name: 编译并运行核心单元测试（含签名验证，注入 HILIA_SIGN_KEY）
         env:
-          HILIA_SIGN_KEY: \${{ secrets.HILIA_SIGN_KEY }}
+          HILIA_SIGN_KEY: ${{ secrets.HILIA_SIGN_KEY }}
         run: |
           cargo test --release --bin hilia --no-run
           cargo test --release --bin hilia -- --test-threads=1
