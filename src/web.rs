@@ -47,7 +47,7 @@ const MAX_PROMPT_DOCUMENT_CHARS: usize = 200_000;
 const MAX_PROMPT_DOCUMENTS: usize = 128;
 const MAX_SECRET_CHARS: usize = 100_000;
 const EVENT_CAPACITY: usize = 4096;
-const AUTH_COOKIE: &str = "gqy_session";
+const AUTH_COOKIE: &str = "hilia_session";
 const LOGIN_WINDOW: Duration = Duration::from_secs(60);
 const LOGIN_ATTEMPT_LIMIT: u8 = 5;
 
@@ -57,8 +57,9 @@ const APP_JS: &str = include_str!("../web/app.js");
 const MINI_HTML: &str = include_str!("../web/mini.html");
 const MINI_CSS: &str = include_str!("../web/mini.css");
 const MINI_JS: &str = include_str!("../web/mini.js");
-const GQY_LOGO: &[u8] = include_bytes!("../pics/GQY-avatar.png");
-const GQY_WALLPAPER: &[u8] = include_bytes!("../pics/GQY-image.png");
+const HILIA_LOGO: &[u8] = include_bytes!("../pics/Hilia-avatar.png");
+const GQY_WALLPAPER: &[u8] = include_bytes!("../pics/Hilia-image.png");
+const PROVIDER_ICONS: &str = include_str!("../web/assets/provider-icons.svg");
 
 #[derive(Clone)]
 struct WebState {
@@ -884,7 +885,7 @@ pub async fn run(paths: GqyPaths, args: WebArgs) -> Result<()> {
         .with_context(|| format!("invalid WebUI host: {}", args.host))?;
     if !bind_ip.is_loopback() && password.is_none() {
         anyhow::bail!(
-            "绑定非回环地址（{}）必须设置访问密码：gqy web --host {} -p <password>",
+            "绑定非回环地址（{}）必须设置访问密码：hilia web --host {} -p <password>",
             args.host,
             args.host
         );
@@ -910,7 +911,7 @@ pub async fn run(paths: GqyPaths, args: WebArgs) -> Result<()> {
 
     let listener = tokio::net::TcpListener::bind(SocketAddr::new(bind_ip, args.port))
         .await
-        .with_context(|| format!("binding 顾清影 WebUI to {}:{}", args.host, args.port))?;
+        .with_context(|| format!("binding 希尔娅 WebUI to {}:{}", args.host, args.port))?;
     let port = listener.local_addr()?.port();
     let boot_id: Arc<str> = random_id("boot", 18).into();
     let events = EventHub::new();
@@ -931,8 +932,8 @@ pub async fn run(paths: GqyPaths, args: WebArgs) -> Result<()> {
         questions.clone(),
     )?;
 
-    // 配置文件热重载：检测 GQY_HOME/config/config.jsonc 被外部修改
-    // （CLI `gqy config set`、直接编辑等），自动重建 agent 并通知前端，
+    // 配置文件热重载：检测 HILIA_HOME/config/config.jsonc 被外部修改
+    // （CLI `hilia config set`、直接编辑等），自动重建 agent 并通知前端，
     // 让菜单栏 / CLI / 面板三端配置始终同步。
     spawn_config_watcher(paths.clone(), actor_tx.clone(), events.clone());
 
@@ -950,7 +951,7 @@ pub async fn run(paths: GqyPaths, args: WebArgs) -> Result<()> {
     // 只有设置了密码才把局域网地址列出来（无密码时仅回环可达）
     let urls = web_access_urls(port, password.is_some());
     for url in &urls {
-        println!("顾清影 WebUI: {url}");
+        println!("希尔娅 WebUI: {url}");
     }
     std::io::stdout().flush().ok();
     if !args.no_open {
@@ -972,7 +973,7 @@ pub async fn run(paths: GqyPaths, args: WebArgs) -> Result<()> {
         .await
         .context("joining WebUI actor task")?
         .map_err(|_| anyhow::anyhow!("WebUI actor thread panicked"))?;
-    serve_result.context("serving 顾清影 WebUI")?;
+    serve_result.context("serving 希尔娅 WebUI")?;
     actor_result
 }
 
@@ -984,8 +985,9 @@ fn router(state: WebState) -> Router {
         .route("/mini", get(mini_asset))
         .route("/mini.css", get(mini_css_asset))
         .route("/mini.js", get(mini_js_asset))
-        .route("/assets/gqy-logo.png", get(logo_asset))
-        .route("/assets/gqy-wallpaper.png", get(wallpaper_asset))
+        .route("/assets/hilia-logo.png", get(logo_asset))
+        .route("/assets/hilia-wallpaper.png", get(wallpaper_asset))
+        .route("/assets/provider-icons.svg", get(provider_icons_asset))
         .route("/api/health", get(health))
         .route("/api/auth/login", post(auth_login))
         .route("/api/bootstrap", get(bootstrap))
@@ -1031,11 +1033,15 @@ async fn mini_js_asset() -> Response {
 }
 
 async fn logo_asset() -> Response {
-    binary_asset(GQY_LOGO, "image/png")
+    binary_asset(HILIA_LOGO, "image/png")
 }
 
 async fn wallpaper_asset() -> Response {
     binary_asset(GQY_WALLPAPER, "image/png")
+}
+
+async fn provider_icons_asset() -> Response {
+    text_asset(PROVIDER_ICONS, "image/svg+xml; charset=utf-8")
 }
 
 fn text_asset(content: &'static str, content_type: &'static str) -> Response {
@@ -1176,7 +1182,7 @@ async fn health() -> Json<Value> {
 }
 
 /// 会话状态（供终端/面板同步轮询）：当前会话最大 seq + 是否有运行中的轮次。
-/// 终端 `gqy` 与面板共享同一 conversation.db；前端轮询此接口，
+/// 终端 `hilia` 与面板共享同一 conversation.db；前端轮询此接口，
 /// 发现 seq 变化即重载历史，实现双端同步。
 async fn session_state(
     State(state): State<WebState>,
@@ -1544,7 +1550,7 @@ fn enqueue_running_prompt(
         if manager.admin_busy {
             return Err(ApiError::new(
                 StatusCode::CONFLICT,
-                "GQY is busy with another operation",
+                "希尔娅 is busy with another operation",
             ));
         }
         manager.active_run_id.clone()
@@ -1633,7 +1639,7 @@ async fn create_turn(
         if manager.active_run_id.is_some() || manager.admin_busy {
             return Err(ApiError::new(
                 StatusCode::CONFLICT,
-                "GQY is busy with another operation",
+                "希尔娅 is busy with another operation",
             ));
         }
         manager.active_run_id = Some(run_id.clone());
@@ -1938,7 +1944,7 @@ fn spawn_actor(
 ) -> Result<(mpsc::UnboundedSender<ActorCommand>, JoinHandle<Result<()>>)> {
     let (sender, receiver) = mpsc::unbounded_channel();
     let join = std::thread::Builder::new()
-        .name("gqy-web-agent".to_string())
+        .name("hilia-web-agent".to_string())
         .spawn(move || {
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -2534,7 +2540,7 @@ fn reserve_admin(manager: &Arc<Mutex<ManagerState>>) -> std::result::Result<(), 
     if manager.active_run_id.is_some() || manager.admin_busy {
         return Err(ApiError::new(
             StatusCode::CONFLICT,
-            "GQY is busy with another operation",
+            "希尔娅 is busy with another operation",
         ));
     }
     manager.admin_busy = true;
@@ -3053,7 +3059,7 @@ fn apply_persona_scope_changes(
                     .parent()
                     .context("persona scope path has no parent")?;
                 let staged = parent.join(format!(
-                    ".gqy-web-scope-{}-{change_index}-{scope_index}",
+                    ".hilia-web-scope-{}-{change_index}-{scope_index}",
                     random_token(10)
                 ));
                 std::fs::rename(&original, &staged)?;
@@ -3641,7 +3647,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             COOKIE,
-            HeaderValue::from_static("other=1; gqy_session=secret-token; suffix=2"),
+            HeaderValue::from_static("other=1; hilia_session=secret-token; suffix=2"),
         );
         assert_eq!(cookie_value(&headers, AUTH_COOKIE), Some("secret-token"));
         assert_eq!(cookie_value(&headers, "session"), None);

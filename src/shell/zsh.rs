@@ -4,11 +4,11 @@ use anyhow::Result;
 use std::io::Write;
 use std::path::Path;
 
-const BEGIN_MARKER: &str = "# >>> gqy zsh hook >>>";
-const END_MARKER: &str = "# <<< gqy zsh hook <<<";
+const BEGIN_MARKER: &str = "# >>> hilia zsh hook >>>";
+const END_MARKER: &str = "# <<< hilia zsh hook <<<";
 
 pub fn hook() -> &'static str {
-    r#"# 拦截「命令未找到」：明显是命令/拼写错误 → 交给系统报错；自然语言 → 交给 GQY。
+    r#"# 拦截「命令未找到」：明显是命令/拼写错误 → 交给系统报错；自然语言 → 交给希尔娅。
 command_not_found_handler() {
     [[ -o interactive ]] || return 127
 
@@ -16,18 +16,18 @@ command_not_found_handler() {
     [[ -n "$text" ]] || return 127
     [[ "$text" != *$'\n'* && "$text" != *$'\r'* ]] || return 127
 
-    # 明显是命令（含路径/内置命令/环境变量前缀）→ 系统报错，不打扰 GQY
-    gqy --shell-classify --shell zsh -- "$@" 2>/dev/null && return 127
+    # 明显是命令（含路径/内置命令/环境变量前缀）→ 系统报错，不打扰希尔娅
+    hilia --shell-classify --shell zsh -- "$@" 2>/dev/null && return 127
 
-    gqy --shell-intercept --shell zsh -- "$@" 2>/dev/null
+    hilia --shell-intercept --shell zsh -- "$@" 2>/dev/null
     return 127
 }
 
-# ---- 多行自然语言：Enter 时整块交给 GQY（与 fish 的拦截策略一致） ----
-__gqy_pending_buffer=""
+# ---- 多行自然语言：Enter 时整块交给希尔娅（与 fish 的拦截策略一致） ----
+__hilia_pending_buffer=""
 
-# 缓冲内是否含「未知命令」行：有则视为自然语言块，交给 GQY
-__gqy_zsh_multiline_has_unknown() {
+# 缓冲内是否含「未知命令」行：有则视为自然语言块，交给希尔娅
+__hilia_zsh_multiline_has_unknown() {
     local buffer="$1" line token kind
     while IFS= read -r line; do
         line="${line#"${line%%[![:space:]]*}"}"
@@ -51,13 +51,13 @@ __gqy_zsh_multiline_has_unknown() {
     return 1
 }
 
-__gqy_zsh_accept_line() {
+__hilia_zsh_accept_line() {
     local buffer="$BUFFER"
     local trimmed="${buffer#"${buffer%%[![:space:]]*}"}"
     if [[ -n "$trimmed" && "$buffer" == *$'\n'* ]]; then
-        if __gqy_zsh_multiline_has_unknown "$buffer"; then
-            # 整块交给 GQY：隐藏光标、清空缓冲，下一提示符发送
-            __gqy_pending_buffer="$buffer"
+        if __hilia_zsh_multiline_has_unknown "$buffer"; then
+            # 整块交给希尔娅：隐藏光标、清空缓冲，下一提示符发送
+            __hilia_pending_buffer="$buffer"
             print -s -- "$buffer"
             print -n '\e[?25l'
             BUFFER=""
@@ -66,12 +66,12 @@ __gqy_zsh_accept_line() {
         fi
     elif [[ "$trimmed" == https://* || "$trimmed" == http://* || "$trimmed" == *://* ]]; then
         # URL 开头的单行输入：zsh 对含 / 的命令不触发 command_not_found_handler
-        # （按路径查找直接报错），这里提前交给 GQY；纯 URL 命令如 curl 不受影响
+        # （按路径查找直接报错），这里提前交给希尔娅；纯 URL 命令如 curl 不受影响
         # （它们是已知命令，不会走到这里；这里只接 URL 开头的未知命令）
         print -s -- "$buffer"
         print -rn -- '\e[?25l'
         print -rn -- $'\e[36m'"${buffer}"$'\e[0m\n'
-        printf '%s' "$buffer" | gqy --shell-intercept --shell zsh --stdin 2>/dev/null
+        printf '%s' "$buffer" | hilia --shell-intercept --shell zsh --stdin 2>/dev/null
         print -rn -- '\e[?25h'
         BUFFER=""
         zle accept-line
@@ -79,23 +79,23 @@ __gqy_zsh_accept_line() {
     fi
     zle accept-line
 }
-zle -N __gqy_zsh_accept_line
-bindkey -M emacs '^M' __gqy_zsh_accept_line
-bindkey -M viins '^M' __gqy_zsh_accept_line
-bindkey -M vicmd '^M' __gqy_zsh_accept_line
+zle -N __hilia_zsh_accept_line
+bindkey -M emacs '^M' __hilia_zsh_accept_line
+bindkey -M viins '^M' __hilia_zsh_accept_line
+bindkey -M vicmd '^M' __hilia_zsh_accept_line
 
-__gqy_zsh_precmd() {
-    if [[ -n "$__gqy_pending_buffer" ]]; then
-        local buffer="$__gqy_pending_buffer"
-        __gqy_pending_buffer=""
+__hilia_zsh_precmd() {
+    if [[ -n "$__hilia_pending_buffer" ]]; then
+        local buffer="$__hilia_pending_buffer"
+        __hilia_pending_buffer=""
         print -rn -- '\e[?25h'
         print -rn -- $'\e[31m'"${buffer}"$'\e[0m\n'
-        printf '%s' "$buffer" | gqy --shell-intercept --shell zsh --stdin 2>/dev/null
+        printf '%s' "$buffer" | hilia --shell-intercept --shell zsh --stdin 2>/dev/null
         print -rn -- '\e[?25h'
     fi
 }
 autoload -Uz add-zsh-hook
-add-zsh-hook precmd __gqy_zsh_precmd
+add-zsh-hook precmd __hilia_zsh_precmd
 "#
 }
 
@@ -124,7 +124,7 @@ pub fn uninstall(paths: &GqyPaths) -> Result<bool> {
     if removed {
         println!(
             "{}: zsh",
-            t("removed GQY shell hook", "已移除 GQY shell hook")
+            t("removed 希尔娅 shell hook", "已移除 希尔娅 shell hook")
         );
     }
     Ok(removed)
@@ -205,7 +205,7 @@ mod tests {
     fn zsh_hook_wires_classifier_and_multiline_intercept() {
         let hook = hook();
         assert!(hook.contains("--shell-classify"));
-        assert!(hook.contains("gqy_zsh_accept_line"));
+        assert!(hook.contains("hilia_zsh_accept_line"));
         assert!(hook.contains("bindkey -M emacs '^M'"));
         assert!(hook.contains("precmd"));
         assert!(hook.contains("--stdin"));
@@ -215,8 +215,8 @@ mod tests {
     fn zsh_hook_does_not_filter_natural_language_symbols() {
         let hook = hook();
         assert!(!hook.contains("${#text} <= 120"));
-        assert!(!hook.contains("gqy_shell_syntax_pattern"));
-        assert!(!hook.contains("gqy_leading_pattern"));
+        assert!(!hook.contains("hilia_shell_syntax_pattern"));
+        assert!(!hook.contains("hilia_leading_pattern"));
     }
 
     #[test]

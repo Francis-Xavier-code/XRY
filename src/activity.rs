@@ -1,7 +1,7 @@
-//! 活动日志（activity log）：记录 GQY 干了什么（工具调用、子代理、关键事件）。
+//! 活动日志（activity log）：记录希尔娅干了什么（工具调用、子代理、关键事件）。
 //!
 //! 设计原则：**默认不进 LLM 上下文**（零 token 开销），落盘为追加式 JSONL，
-//! 需要时通过 `gqy activity [--search <词>]` 查询。供顾清影复盘、排查、自我回顾用。
+//! 需要时通过 `hilia activity [--search <词>]` 查询。供希尔娅复盘、排查、自我回顾用。
 
 use crate::paths::GqyPaths;
 use anyhow::Result;
@@ -86,8 +86,8 @@ mod tests {
     #[test]
     fn records_and_queries_with_search() {
         let root = tempfile::tempdir().unwrap().into_path();
-        let old = std::env::var_os("GQY_HOME");
-        std::env::set_var("GQY_HOME", &root);
+        let old = std::env::var_os("HILIA_HOME");
+        std::env::set_var("HILIA_HOME", &root);
         let paths = crate::paths::GqyPaths::new().unwrap();
 
         record_tool(&paths, "read_file", true);
@@ -105,9 +105,9 @@ mod tests {
         assert_eq!(tools[0]["detail"]["ok"], false);
 
         if let Some(v) = old {
-            std::env::set_var("GQY_HOME", v);
+            std::env::set_var("HILIA_HOME", v);
         } else {
-            std::env::remove_var("GQY_HOME");
+            std::env::remove_var("HILIA_HOME");
         }
     }
 }

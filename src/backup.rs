@@ -139,7 +139,7 @@ pub fn backup_now(paths: &GqyPaths, push: bool) -> Result<BackupOutcome> {
     let settings = load_settings(&backup_dir)?;
     let repo = backup_dir.join("repository");
     if !repo.join(".git").is_dir() {
-        bail!("backup repository is not initialized; run `gqy backup init` first");
+        bail!("backup repository is not initialized; run `hilia backup init` first");
     }
 
     snapshot(paths, &repo)?;
@@ -148,7 +148,7 @@ pub fn backup_now(paths: &GqyPaths, push: bool) -> Result<BackupOutcome> {
         .trim()
         .is_empty();
     if dirty {
-        let message = format!("GQY snapshot {}", Utc::now().to_rfc3339());
+        let message = format!("希尔娅 snapshot {}", Utc::now().to_rfc3339());
         run_git(&backup_dir, &settings, ["commit", "-m", message.as_str()])?;
     }
 
@@ -172,7 +172,7 @@ pub fn backup_now(paths: &GqyPaths, push: bool) -> Result<BackupOutcome> {
     })
 }
 
-/// 自动备份节流：距上次快照不足该秒数则跳过（`gqy backup now` 不受限）。
+/// 自动备份节流：距上次快照不足该秒数则跳过（`hilia backup now` 不受限）。
 const AUTO_BACKUP_MIN_INTERVAL_SECS: i64 = 30 * 60;
 
 /// 节流间隔（测试用环境变量可调，例如 `GQY_BACKUP_INTERVAL_SECS=0` 关闭节流）。
@@ -238,7 +238,7 @@ pub fn status(paths: &GqyPaths) -> Result<String> {
 }
 
 fn t_local_mode() -> String {
-    "(none — local mode; run `gqy backup remote <url>` to attach one)".to_string()
+    "(none — local mode; run `hilia backup remote <url>` to attach one)".to_string()
 }
 
 pub fn restore(paths: &GqyPaths, options: RestoreOptions) -> Result<()> {
@@ -445,7 +445,7 @@ fn copy_tree_plain(source: &Path, destination: &Path) -> Result<()> {
 fn required_isolated_home(paths: &GqyPaths) -> Result<PathBuf> {
     paths
         .isolated_home()?
-        .context("Git backup requires an isolated GQY_HOME; set it to an absolute directory first")
+        .context("Git backup requires an isolated HILIA_HOME; set it to an absolute directory first")
 }
 
 fn validate_init_options(home: &Path, options: &BackupInitOptions) -> Result<()> {
@@ -496,11 +496,11 @@ fn validate_remote(home: &Path, remote: &str, ssh_key: Option<&Path>) -> Result<
             bail!("--ssh-key must be an absolute path");
         }
         let secrets = std::fs::canonicalize(home.join("secrets"))
-            .context("GQY_HOME/secrets must exist before configuring an SSH key")?;
+            .context("HILIA_HOME/secrets must exist before configuring an SSH key")?;
         let real_key = std::fs::canonicalize(key)
             .with_context(|| format!("SSH key does not exist: {}", key.display()))?;
         if !real_key.starts_with(&secrets) {
-            bail!("--ssh-key must live below GQY_HOME/secrets");
+            bail!("--ssh-key must live below HILIA_HOME/secrets");
         }
         if !real_key.is_file() {
             bail!("SSH key does not exist: {}", key.display());
@@ -614,7 +614,7 @@ fn load_settings(backup_dir: &Path) -> Result<BackupSettings> {
 fn ensure_isolated_global_config(backup_dir: &Path) -> Result<()> {
     let path = backup_dir.join("gitconfig");
     if !path.exists() {
-        std::fs::write(path, "# GQY isolated Git configuration\n")?;
+        std::fs::write(path, "# Hilia isolated Git configuration\n")?;
     }
     Ok(())
 }
@@ -626,7 +626,7 @@ fn write_repository_files(repo: &Path) -> Result<()> {
     )?;
     std::fs::write(
         repo.join("README.md"),
-        "# GQY private state snapshot\n\nThis repository contains a consistent, redacted snapshot of GQY's portable state. API keys, Git credentials, caches, and live SQLite WAL files are intentionally excluded.\n",
+        "# Hilia private state snapshot\n\nThis repository contains a consistent, redacted snapshot of Hilia's portable state. API keys, Git credentials, caches, and live SQLite WAL files are intentionally excluded.\n",
     )?;
     Ok(())
 }
@@ -648,7 +648,7 @@ fn snapshot(paths: &GqyPaths, repo: &Path) -> Result<()> {
 
     let manifest = json!({
         "format": 1,
-        "generated_by": "GQY isolated backup",
+        "generated_by": "Hilia isolated backup",
         "contains": ["redacted configuration", "personas and skills", "memory", "conversation state", "pictures"],
         "excludes": ["API keys and secrets", "Git credentials", "cache and logs", "SQLite WAL/SHM files"]
     });
@@ -899,7 +899,7 @@ fn shell_quote(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::paths::GQY_HOME_ENV;
+    use crate::paths::HILIA_HOME_ENV;
     use std::sync::Mutex;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -974,7 +974,7 @@ mod tests {
             cache_dir: root.join("cache"),
             state_dir: root.join("state"),
             pictures_dir: root.join("pictures"),
-            fish_hook_file: root.join("fish/conf.d/gqy.fish"),
+            fish_hook_file: root.join("fish/conf.d/hilia.fish"),
             bash_hook_file: root.join("config/shell/bash-hook.sh"),
             zsh_hook_file: root.join("config/shell/zsh-hook.zsh"),
             scripts_dir: root.join("config/scripts"),
@@ -1002,7 +1002,7 @@ mod tests {
         std::fs::write(paths1.state_dir.join("memory.md"), "the answer is 42\n").unwrap();
         std::fs::create_dir_all(&paths1.data_dir.join("kb")).unwrap();
         std::fs::write(paths1.data_dir.join("kb/note.md"), "persistent note\n").unwrap();
-        std::env::set_var(GQY_HOME_ENV, &home1);
+        std::env::set_var(HILIA_HOME_ENV, &home1);
 
         let options = BackupInitOptions {
             remote: Some(remote.display().to_string()),
@@ -1017,7 +1017,7 @@ mod tests {
 
         let home2 = root.path().join("home2");
         let paths2 = test_paths(&home2);
-        std::env::set_var(GQY_HOME_ENV, &home2);
+        std::env::set_var(HILIA_HOME_ENV, &home2);
         restore(
             &paths2,
             RestoreOptions {
@@ -1054,7 +1054,7 @@ mod tests {
         let paths1 = test_paths(&home1);
         std::fs::create_dir_all(&paths1.state_dir).unwrap();
         std::fs::write(paths1.state_dir.join("memory.md"), "keep me\n").unwrap();
-        std::env::set_var(GQY_HOME_ENV, &home1);
+        std::env::set_var(HILIA_HOME_ENV, &home1);
         let options = BackupInitOptions {
             remote: Some(remote.display().to_string()),
             branch: "main".to_string(),
@@ -1070,7 +1070,7 @@ mod tests {
         let paths2 = test_paths(&home2);
         std::fs::create_dir_all(&paths2.config_dir).unwrap();
         std::fs::write(&paths2.config_file, "{\"live\":true}\n").unwrap();
-        std::env::set_var(GQY_HOME_ENV, &home2);
+        std::env::set_var(HILIA_HOME_ENV, &home2);
 
         let error = restore(
             &paths2,
@@ -1113,7 +1113,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let home = root.path().join("home");
         let paths = test_paths(&home);
-        std::env::set_var(GQY_HOME_ENV, &home);
+        std::env::set_var(HILIA_HOME_ENV, &home);
         std::env::set_var("GQY_BACKUP_INTERVAL_SECS", "0");
 
         let options = BackupInitOptions {
@@ -1147,7 +1147,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let home = root.path().join("home");
         let paths = test_paths(&home);
-        std::env::set_var(GQY_HOME_ENV, &home);
+        std::env::set_var(HILIA_HOME_ENV, &home);
 
         init(
             &paths,
@@ -1186,7 +1186,7 @@ mod tests {
 
         let home = root.path().join("home");
         let paths = test_paths(&home);
-        std::env::set_var(GQY_HOME_ENV, &home);
+        std::env::set_var(HILIA_HOME_ENV, &home);
         std::env::set_var("GQY_BACKUP_INTERVAL_SECS", "0");
         init(
             &paths,
@@ -1223,7 +1223,7 @@ mod gh_remote_tests {
 
     #[test]
     fn detects_gh_repo_names() {
-        let repo = looks_like_gh_repo("Francis-Xavier-code/GQY-backup");
+        let repo = looks_like_gh_repo("Francis-Xavier-code/Hilia-backup");
         assert!(repo);
         assert!(!looks_like_gh_repo("https://github.com/a/b.git"));
         assert!(!looks_like_gh_repo("git@github.com:a/b.git"));

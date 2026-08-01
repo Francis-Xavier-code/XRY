@@ -747,7 +747,7 @@ impl MemesPluginConfig {
                 .persona_libraries
                 .get("default")
                 .cloned()
-                .unwrap_or_else(|| "gqy".to_string());
+                .unwrap_or_else(|| "hilia".to_string());
         }
         let persona = persona_scope_name(persona);
         self.persona_libraries
@@ -2086,10 +2086,10 @@ fn default_web_images_timeout() -> u64 {
 fn default_deep_research_dir() -> String {
     if let Some(dirs) = directories::UserDirs::new() {
         if let Some(documents) = dirs.document_dir() {
-            return documents.join("GQY/deep-thinking").display().to_string();
+            return documents.join("Hilia/deep-thinking").display().to_string();
         }
     }
-    "~/Documents/GQY/deep-thinking".to_string()
+    "~/Documents/Hilia/deep-thinking".to_string()
 }
 
 fn default_deep_research_depth() -> String {
@@ -2131,10 +2131,10 @@ fn default_image_generation_resolution() -> String {
 fn default_image_generation_output_dir() -> String {
     if let Some(dirs) = directories::UserDirs::new() {
         if let Some(pictures) = dirs.picture_dir() {
-            return pictures.join("gqy/generated-images").display().to_string();
+            return pictures.join("hilia/generated-images").display().to_string();
         }
     }
-    "~/Pictures/gqy/generated-images".to_string()
+    "~/Pictures/hilia/generated-images".to_string()
 }
 
 fn default_image_generation_timeout() -> u64 {
@@ -2445,8 +2445,8 @@ mod tests {
         let provider = &mut config.providers[0];
         let provider_id = provider.id.clone();
         provider.models = vec![
-            "gqy-known-window-model".to_string(),
-            "gqy-unknown-window-model".to_string(),
+            "hilia-known-window-model".to_string(),
+            "hilia-unknown-window-model".to_string(),
         ];
         provider.default_model = provider.models[0].clone();
         provider
@@ -2466,7 +2466,7 @@ mod tests {
         assert_eq!(config.active_context_window().unwrap(), None);
         config.providers[0]
             .model_context_window
-            .insert("gqy-unknown-window-model".to_string(), 128_000);
+            .insert("hilia-unknown-window-model".to_string(), 128_000);
         assert_eq!(config.active_context_window().unwrap(), Some(128_000));
     }
 
@@ -2616,9 +2616,9 @@ mod tests {
             cache_dir: temp.path().join("cache"),
             state_dir: temp.path().join("state"),
             pictures_dir: temp.path().join("pictures"),
-            fish_hook_file: temp.path().join("gqy.fish"),
-            bash_hook_file: temp.path().join("gqy.bash"),
-            zsh_hook_file: temp.path().join("gqy.zsh"),
+            fish_hook_file: temp.path().join("hilia.fish"),
+            bash_hook_file: temp.path().join("hilia.bash"),
+            zsh_hook_file: temp.path().join("hilia.zsh"),
             scripts_dir: temp.path().join("scripts"),
             system_scripts_dir: temp.path().join("system-scripts"),
             share_dir: PathBuf::new(),
@@ -2634,7 +2634,7 @@ mod tests {
     #[test]
     fn meme_library_defaults_follow_persona() {
         let memes = MemesPluginConfig::default();
-        assert_eq!(memes.library_for_persona(""), "gqy");
+        assert_eq!(memes.library_for_persona(""), "hilia");
         assert_eq!(
             memes.library_for_persona("Custom Persona"),
             "custom-persona"

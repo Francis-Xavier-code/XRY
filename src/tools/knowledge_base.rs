@@ -506,7 +506,7 @@ impl KnowledgeBase {
                         lock_path.display()
                     );
                     println!(
-                        "if no gqy reindex process is running, remove the stale lock file and retry"
+                        "if no hilia reindex process is running, remove the stale lock file and retry"
                     );
                 }
                 return Ok(0);
@@ -1046,7 +1046,7 @@ async fn tool_edit(args: Value, config: AppConfig, paths: GqyPaths) -> Result<St
         "old_line_count": result.old_line_count,
         "new_line_count": result.new_line_count,
         "semantic_refreshed": result.semantic_refreshed,
-        "warning": if name.starts_with("default-kb/") { Some("default-kb files may be overwritten by gqy update-default-kb") } else { None::<&str> },
+        "warning": if name.starts_with("default-kb/") { Some("default-kb files may be overwritten by hilia update-default-kb") } else { None::<&str> },
     })
     .to_string())
 }
@@ -1066,7 +1066,7 @@ async fn tool_remove(args: Value, config: AppConfig, paths: GqyPaths) -> Result<
     Ok(json!({
         "ok": true,
         "path": rel,
-        "warning": if name.starts_with("default-kb/") { Some("default-kb files may be restored by gqy update-default-kb") } else { None::<&str> },
+        "warning": if name.starts_with("default-kb/") { Some("default-kb files may be restored by hilia update-default-kb") } else { None::<&str> },
     })
     .to_string())
 }
@@ -1505,7 +1505,7 @@ mod tests {
             cache_dir: root.join("cache"),
             state_dir: root.join("state"),
             pictures_dir: root.join("pictures"),
-            fish_hook_file: root.join("fish/conf.d/gqy.fish"),
+            fish_hook_file: root.join("fish/conf.d/hilia.fish"),
             bash_hook_file: root.join("config/shell/bash-hook.sh"),
             zsh_hook_file: root.join("config/shell/zsh-hook.zsh"),
             scripts_dir: root.join("config/scripts"),

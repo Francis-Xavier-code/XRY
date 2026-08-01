@@ -3018,7 +3018,7 @@ fn render_inline(text: &str) -> String {
     output
 }
 
-// ── 月夜清影主题：深蓝夜空 + 月光银白 + 冷蓝紫（顾清影：清冷的影子）──
+// ── 月夜清影主题：深蓝夜空 + 月光银白 + 冷蓝紫（希尔娅：清冷的影子）──
 const RESET: &str = "\x1b[0m";
 const PRIMARY_STYLE: &str = "\x1b[38;2;203;213;225m";    // 月光银白（正文强调）
 const SECONDARY_STYLE: &str = "\x1b[38;2;147;197;253m";  // 月白蓝（次要）
@@ -4459,7 +4459,7 @@ mod tests {
         let output = render_table(&[
             "| 项目 | 内容 |".to_string(),
             "|---|---|".to_string(),
-            "| 名字 | 顾清影 / GQY |".to_string(),
+            "| 名字 | 希尔娅 / Hilia |".to_string(),
             "| 年龄 | 18 |".to_string(),
         ]);
         let terminal_width = terminal::size()

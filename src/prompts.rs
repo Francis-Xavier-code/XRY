@@ -1,6 +1,6 @@
 use base64::Engine;
 
-include!(concat!(env!("OUT_DIR"), "/default_gqy_prompt.rs"));
+include!(concat!(env!("OUT_DIR"), "/default_hilia_prompt.rs"));
 
 pub const PLAN_REMINDER: &str = include_str!("prompts/plan.md");
 pub const CHAT_REMINDER: &str = include_str!("prompts/chat.md");

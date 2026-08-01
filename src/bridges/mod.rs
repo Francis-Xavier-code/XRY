@@ -1,11 +1,11 @@
 //! 消息平台桥接管理（gqy napcat / gqy tg）。
 //!
 //! 把 communication/ 里的桥接从「手工部署」变成 CLI 可管理：
-//! - 配置统一存 GQY_HOME/config/bridges.json（token/self_id/ws 等）
+//! - 配置统一存 HILIA_HOME/config/bridges.json（token/self_id/ws 等）
 //! - LaunchAgent 自启动（install/uninstall/status，KeepAlive 托管）
 //! - napcat 本体支持自动下载安装（从官方 GitHub Release 获取）
 //!
-//! 桥接脚本来源：brew 安装时为 share/gqy/bridges/，源码开发时为仓库 communication/。
+//! 桥接脚本来源：brew 安装时为 share/hilia/bridges/，源码开发时为仓库 communication/。
 
 pub mod napcat;
 pub mod tg;
@@ -82,7 +82,7 @@ pub fn save(paths: &GqyPaths, config: &BridgesConfig) -> Result<()> {
     Ok(())
 }
 
-/// 桥接脚本目录：brew 安装 = share/gqy/bridges；源码开发 = 仓库 communication/。
+/// 桥接脚本目录：brew 安装 = share/hilia/bridges；源码开发 = 仓库 communication/。
 pub fn bridges_dir(paths: &GqyPaths) -> PathBuf {
     let share_bridges = paths.share_dir.join("bridges");
     if share_bridges.join("napcat/bridge.cjs").is_file() {
@@ -108,7 +108,7 @@ pub fn bridge_script(paths: &GqyPaths, platform: &str) -> Result<PathBuf> {
 }
 
 pub fn node_bin() -> String {
-    std::env::var("GQY_NODE_BIN")
+    std::env::var("HILIA_NODE_BIN")
         .ok()
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "/opt/homebrew/bin/node".to_string())
@@ -222,7 +222,7 @@ fn xml_escape(text: &str) -> String {
         .replace('>', "&gt;")
 }
 
-/// 平台标签 -> 日志文件（放 GQY_HOME/cache/logs/ 下，随备份）。
+/// 平台标签 -> 日志文件（放 HILIA_HOME/cache/logs/ 下，随备份）。
 pub fn bridge_log_path(paths: &GqyPaths, platform: &str) -> PathBuf {
     paths.logs_dir().join(format!("{platform}-bridge.log"))
 }

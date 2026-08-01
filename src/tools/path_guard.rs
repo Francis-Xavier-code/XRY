@@ -1,21 +1,21 @@
-//! 地盘护栏：代码级约束，防止 GQY 把文件写进项目源码目录等受保护区。
+//! 地盘护栏：代码级约束，防止希尔娅把文件写进项目源码目录等受保护区。
 //!
 //! 提示词里的「工作纪律」是软约束；这里是硬约束，任何写文件工具
 //! （write_file / edit_string / apply_patch）在落盘前都会经过本模块检查。
 //!
 //! 环境变量：
-//! - `GQY_PROJECT_DIR`：项目源码目录（默认 `~/GQY`）
-//! - `GQY_WORKSPACE`：她的临时工作区（默认 `~/gqy-workspace`）
-//! - `GQY_ALLOW_PROJECT_WRITES=1`：开发模式，放行项目目录写入（主人专用）
+//! - `HILIA_PROJECT_DIR`：项目源码目录（默认 `~/Hilia`）
+//! - `HILIA_WORKSPACE`：她的临时工作区（默认 `~/hilia-workspace`）
+//! - `HILIA_ALLOW_PROJECT_WRITES=1`：开发模式，放行项目目录写入（主人专用）
 
 use anyhow::{bail, Result};
 use std::path::{Path, PathBuf};
 
 pub fn project_dir() -> PathBuf {
-    if let Some(dir) = std::env::var_os("GQY_PROJECT_DIR") {
+    if let Some(dir) = std::env::var_os("HILIA_PROJECT_DIR") {
         return PathBuf::from(dir);
     }
-    // 从可执行文件位置推断项目根：<proj>/target/release/gqy 或 <proj>/target/debug/gqy
+    // 从可执行文件位置推断项目根：<proj>/target/release/hilia 或 <proj>/target/debug/hilia
     if let Ok(exe) = std::env::current_exe() {
         if let Some(target) = exe.parent().and_then(|p| p.parent()) {
             if target.file_name().is_some_and(|n| n == "target") {
@@ -27,19 +27,24 @@ pub fn project_dir() -> PathBuf {
             }
         }
     }
+    let fallback = if cfg!(windows) {
+        PathBuf::from(r"C:\Users\Public\Hilia")
+    } else {
+        PathBuf::from("/Users/Shared/Hilia")
+    };
     directories::BaseDirs::new()
-        .map(|dirs| dirs.home_dir().join("GQY"))
-        .unwrap_or_else(|| PathBuf::from("/Users/Shared/GQY"))
+        .map(|dirs| dirs.home_dir().join("Hilia"))
+        .unwrap_or(fallback)
 }
 
 /// 她的临时工作区：下载、解压、草稿等临时文件放这里。
 pub fn workspace_dir() -> PathBuf {
-    if let Some(dir) = std::env::var_os("GQY_WORKSPACE") {
+    if let Some(dir) = std::env::var_os("HILIA_WORKSPACE") {
         return PathBuf::from(dir);
     }
     directories::BaseDirs::new()
-        .map(|dirs| dirs.home_dir().join("gqy-workspace"))
-        .unwrap_or_else(|| PathBuf::from("/tmp/gqy-workspace"))
+        .map(|dirs| dirs.home_dir().join("hilia-workspace"))
+        .unwrap_or_else(|| std::env::temp_dir().join("hilia-workspace"))
 }
 
 /// 写文件前的护栏：目标在项目源码目录内且未显式放行时拒绝。
@@ -47,12 +52,12 @@ pub fn ensure_writable(path: &Path) -> Result<()> {
     if !is_inside(path, &project_dir()) {
         return Ok(());
     }
-    if std::env::var_os("GQY_ALLOW_PROJECT_WRITES").is_some() {
+    if std::env::var_os("HILIA_ALLOW_PROJECT_WRITES").is_some() {
         return Ok(());
     }
     bail!(
         "路径位于项目源码目录（{}）内，受保护。\
-         下载/临时文件请放到 {}；如需修改项目本身，请设置 GQY_ALLOW_PROJECT_WRITES=1",
+         下载/临时文件请放到 {}；如需修改项目本身，请设置 HILIA_ALLOW_PROJECT_WRITES=1",
         project_dir().display(),
         workspace_dir().display()
     )
@@ -94,33 +99,33 @@ mod tests {
 
     #[test]
     fn detects_project_inside_paths() {
-        let dir = std::env::temp_dir().join("gqy-guard-test");
+        let dir = std::env::temp_dir().join("hilia-guard-test");
         std::fs::create_dir_all(dir.join("src")).unwrap();
         assert!(is_inside(&dir.join("src/main.rs"), &dir));
         assert!(is_inside(&dir.join("Cargo.toml"), &dir));
         assert!(!is_inside(&std::env::temp_dir().join("other.txt"), &dir));
         // 兄弟目录（../outside.rs）不算 inside
-        assert!(!is_inside(&dir.parent().unwrap().join("gqy-outside.txt"), &dir));
+        assert!(!is_inside(&dir.parent().unwrap().join("hilia-outside.txt"), &dir));
     }
 
     #[test]
     fn writable_outside_project_passes() {
-        let temp = std::env::temp_dir().join("gqy-writable-test.txt");
+        let temp = std::env::temp_dir().join("hilia-writable-test.txt");
         ensure_writable(&temp).unwrap();
     }
 
     #[test]
     fn writable_inside_project_is_rejected() {
         // 用环境变量指向一个临时项目目录，验证护栏本身（不依赖真实仓库位置）
-        let temp = std::env::temp_dir().join("gqy-guard-project-test");
+        let temp = std::env::temp_dir().join("hilia-guard-project-test");
         std::fs::create_dir_all(&temp).unwrap();
         let guarded_file = temp.join("src/main.rs");
         std::fs::create_dir_all(guarded_file.parent().unwrap()).unwrap();
         std::fs::write(&guarded_file, "").unwrap();
 
-        unsafe { std::env::set_var("GQY_PROJECT_DIR", &temp) };
+        unsafe { std::env::set_var("HILIA_PROJECT_DIR", &temp) };
         let result = ensure_writable(&guarded_file);
-        unsafe { std::env::remove_var("GQY_PROJECT_DIR") };
+        unsafe { std::env::remove_var("HILIA_PROJECT_DIR") };
         assert!(result.is_err());
         let message = format!("{:#}", result.unwrap_err());
         assert!(message.contains("受保护"));

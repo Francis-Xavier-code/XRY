@@ -1,6 +1,6 @@
 //! 语音工具（本地、零 API 成本）：
-//! - `speak`：macOS `say` 朗读一段文字（TTS）
-//! - `listen_audio`：识别本地音频文件（STT，speech-tool.swift 离线识别）
+//! - `speak`：系统语音朗读一段文字（macOS `say` / Windows PowerShell System.Speech）
+//! - `listen_audio`：识别本地音频文件（STT，macOS speech-tool.swift / Windows System.Speech）
 //! 与本地视觉同思路：不消耗模型额度，适合语音交互场景。
 
 use super::{ToolRegistry, ToolSpec};
@@ -14,14 +14,14 @@ pub fn register(registry: &mut ToolRegistry, paths: GqyPaths) {
     registry.register(ToolSpec::new(
         "speak",
         t(
-            "Speak a short text aloud using the system voice (macOS `say`, offline, free). Use for greetings, reminders, or when the user asks you to say something. Keep text short.",
-            "用系统语音朗读一段文字（macOS `say`，离线免费）。用于问候、提醒，或用户让你说话时。文字保持简短。",
+            "Speak a short text aloud using the system voice (offline, free: macOS `say` / Windows PowerShell System.Speech). Use for greetings, reminders, or when the user asks you to say something. Keep text short.",
+            "用系统语音朗读一段文字（离线免费：macOS `say` / Windows PowerShell System.Speech）。用于问候、提醒，或用户让你说话时。文字保持简短。",
         ),
         json!({
             "type": "object",
             "properties": {
                 "text": { "type": "string", "description": t("Text to speak.", "要朗读的文字。") },
-                "voice": { "type": "string", "description": t("Optional voice name (e.g. Ting-Ting, Samantha). Defaults to system voice.", "可选语音名（如 Ting-Ting、Samantha）。默认系统语音。") }
+                "voice": { "type": "string", "description": t("Optional voice name (run hilia tts --list to see available). Defaults to system voice.", "可选语音名（`hilia tts --list` 可查看）。默认系统语音。") }
             },
             "required": ["text"],
             "additionalProperties": false
@@ -42,8 +42,8 @@ pub fn register(registry: &mut ToolRegistry, paths: GqyPaths) {
         json!({
             "type": "object",
             "properties": {
-                "audio": { "type": "string", "description": t("Path to the audio file (m4a/wav/aiff).", "音频文件路径（m4a/wav/aiff）。") },
-                "locale": { "type": "string", "description": t("Recognition language, default zh-Hans.", "识别语言，默认 zh-Hans。") }
+                "audio": { "type": "string", "description": t("Path to the audio file (Windows: 16kHz mono WAV; macOS: m4a/wav/aiff).", "音频文件路径（Windows：16kHz 单声道 WAV；macOS：m4a/wav/aiff）。") },
+                "locale": { "type": "string", "description": t("Recognition language, default zh-Hans (macOS) / zh-CN (Windows).", "识别语言，默认 zh-Hans（macOS）/ zh-CN（Windows）。") }
             },
             "required": ["audio"],
             "additionalProperties": false
@@ -55,7 +55,7 @@ pub fn register(registry: &mut ToolRegistry, paths: GqyPaths) {
     ));
 }
 
-async fn speak(args: Value, paths: GqyPaths) -> Result<String> {
+async fn speak(args: Value, _paths: GqyPaths) -> Result<String> {
     let text = args
         .get("text")
         .and_then(Value::as_str)
@@ -85,15 +85,17 @@ async fn listen_audio(args: Value, paths: GqyPaths) -> Result<String> {
     let locale = args
         .get("locale")
         .and_then(Value::as_str)
-        .unwrap_or("zh-Hans")
+        .unwrap_or(if cfg!(windows) { "zh-CN" } else { "zh-Hans" })
         .to_string();
     match crate::speech::transcribe(&paths, &audio, Some(&locale)) {
         Ok(text) => Ok(json!({"ok": true, "text": text, "locale": locale}).to_string()),
-        Err(err) => Ok(json!({
-            "ok": false,
-            "error": err.to_string(),
-            "hint": "STT 需要带 bundle 身份的应用授权（macOS 语音识别是 TCC 敏感权限，裸脚本无法自动授权）。CLI 下建议用 macOS 系统听写（快捷键 fn 双击或 系统设置 → 键盘 → 听写）。"
-        })
-        .to_string()),
+        Err(err) => {
+            let hint = if cfg!(windows) {
+                "Windows 语音识别依赖系统语音包：设置 → 时间和语言 → 语言 → 添加语音（中文(简体) 语音识别）。音频需为 16kHz 单声道 WAV。"
+            } else {
+                "STT 需要带 bundle 身份的应用授权（macOS 语音识别是 TCC 敏感权限，裸脚本无法自动授权）。CLI 下建议用 macOS 系统听写（快捷键 fn 双击或 系统设置 → 键盘 → 听写）。"
+            };
+            Ok(json!({"ok": false, "error": err.to_string(), "hint": hint}).to_string())
+        }
     }
 }

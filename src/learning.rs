@@ -5,7 +5,7 @@
 //! - 用户消息包含「记住这个/记下来/以后就这么做/总结成方法」等明确信号
 //! - 且本轮有足够长的助手回答（有实质内容可沉淀）
 //!
-//! 生成的文件带 `generated_by: gqy` 标记，清理逻辑（memory::prune 里已有）
+//! 生成的文件带 `generated_by: hilia` 标记，清理逻辑（memory::prune 里已有）
 //! 会在技能文件缺失时自动清理 skill_records。
 
 use crate::config::AppConfig;
@@ -75,7 +75,7 @@ pub fn maybe_learn(
 
     std::fs::create_dir_all(&skill_dir)?;
     let body = format!(
-        "# {title}\n\n> generated_by: gqy · 自动学习于 {}\n> 来源：对话中用户要求记住的方法\n\n{}\n",
+        "# {title}\n\n> generated_by: hilia · 自动学习于 {}\n> 来源：对话中用户要求记住的方法\n\n{}\n",
         Local::now().format("%Y-%m-%d %H:%M"),
         content
     );
@@ -134,17 +134,17 @@ mod tests {
     #[test]
     fn skips_short_answers() {
         let root = tempfile::tempdir().unwrap().into_path();
-        let old = std::env::var_os("GQY_HOME");
-        std::env::set_var("GQY_HOME", &root);
+        let old = std::env::var_os("HILIA_HOME");
+        std::env::set_var("HILIA_HOME", &root);
         let paths = crate::paths::GqyPaths::new().unwrap();
         let config = AppConfig::default();
         // 用户要求记住但回答太短 → 不沉淀
         let result = maybe_learn(&paths, &config, "记住这个方法", "好").unwrap();
         assert!(result.is_none());
         if let Some(v) = old {
-            std::env::set_var("GQY_HOME", v);
+            std::env::set_var("HILIA_HOME", v);
         } else {
-            std::env::remove_var("GQY_HOME");
+            std::env::remove_var("HILIA_HOME");
         }
     }
 }

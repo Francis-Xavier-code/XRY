@@ -168,7 +168,7 @@ fn bridge_plist(paths: &GqyPaths, config: &TgConfig, script: &Path) -> Result<se
             "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
             "GQY_TG_TOKEN": config.token,
             "GQY_TG_OWNER_ID": config.owner_id,
-            "GQY_BRIDGE_LOG": log.to_str().unwrap_or_default(),
+            "HILIA_BRIDGE_LOG": log.to_str().unwrap_or_default(),
         },
         "RunAtLoad": true,
         "KeepAlive": true,

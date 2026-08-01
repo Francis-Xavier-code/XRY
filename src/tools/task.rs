@@ -266,7 +266,7 @@ async fn run_task(
         "completed"
     };
 
-    // 子代理活动日志（默认不进上下文，gqy activity 可查）
+    // 子代理活动日志（默认不进上下文，hilia activity 可查）
     crate::activity::record_subagent(
         &context.paths,
         sa_type.label(),
@@ -311,7 +311,7 @@ fn subagent_client(
         .provider(provider_id.as_deref())?
         .clone();
     if !provider.models.iter().any(|m| m == model_name) {
-        bail!("unknown model: {model_name} (check `gqy models`)");
+        bail!("unknown model: {model_name} (check `hilia models`)");
     }
     provider.default_model = model_name.to_string();
     let _ = mode;

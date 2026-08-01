@@ -8,7 +8,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::Layer;
 
-const LOG_ENV: &str = "GQY_LOG";
+const LOG_ENV: &str = "HILIA_LOG";
 const LOG_FILE_LIMIT: usize = 8;
 const LOG_BUFFERED_LINES_LIMIT: usize = 1_024;
 
@@ -30,7 +30,7 @@ pub fn init(paths: &GqyPaths, cli_debug: bool) -> Result<LoggingGuard> {
 
     let appender = RollingFileAppender::builder()
         .rotation(Rotation::DAILY)
-        .filename_prefix("gqy")
+        .filename_prefix("hilia")
         .filename_suffix("log")
         .max_log_files(LOG_FILE_LIMIT)
         .build(&logs_dir)
@@ -41,7 +41,7 @@ pub fn init(paths: &GqyPaths, cli_debug: bool) -> Result<LoggingGuard> {
         .finish(appender);
     let targets = Targets::new()
         .with_default(LevelFilter::OFF)
-        .with_target("gqy", level);
+        .with_target("hilia", level);
     let fmt_layer = tracing_subscriber::fmt::layer()
         .with_ansi(false)
         .with_target(false)

@@ -4,7 +4,7 @@
       "id": "crack_search",
       "display_name": "游戏破解状态查询",
       "description": "通过游戏名或关键词搜索游戏破解状态。优先搜索 crackrelease.com（收录较全），无结果时回退 isitcracked.com 补充。返回是否已破解、DRM保护、破解日期、发布日期、场景组等。支持英文游戏名搜索效果最佳。",
-      "path": "crack-search",
+      "path": "crack-search.py",
       "parameters": {
         "type": "object",
         "properties": {

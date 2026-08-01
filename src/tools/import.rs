@@ -1,12 +1,12 @@
-//! 工具包导入：把一个目录/Git 仓库转换成 GQY 可长期使用的脚本工具。
+//! 工具包导入：把一个目录/Git 仓库转换成希尔娅可长期使用的脚本工具。
 //!
 //! 标准（见 docs/02-设计/tool-package-standard.md）：
-//! - 仓库根放 `gqy-tools.json`（或 manifest.json / index.json）声明工具清单，
-//!   格式与 GQY 脚本工具一致：{ "scripts": [ { id, display_name, description,
+//! - 仓库根放 `hilia-tools.json`（或 manifest.json / index.json）声明工具清单，
+//!   格式与希尔娅脚本工具一致：{ "scripts": [ { id, display_name, description,
 //!   path, parameters, timeout_seconds, always_loaded, load_policy, groups } ] }
 //! - 没有清单时自动扫描可执行文件，描述取文件头 `Description:` 注释
 //!
-//! 导入后写入 `GQY_HOME/config/scripts/<name>/`，随每轮对话自动扫描注册，
+//! 导入后写入 `HILIA_HOME/config/scripts/<name>/`，随每轮对话自动扫描注册，
 //! 长期可用；随备份快照，换机恢复后依然在。
 
 use crate::paths::GqyPaths;
@@ -207,7 +207,7 @@ fn resolve_source(source: &str) -> Result<PathBuf> {
     }
 }
 
-/// 先理解再导入：列出候选可执行脚本与头部摘要，供 GQY/用户判断核心功能。
+/// 先理解再导入：列出候选可执行脚本与头部摘要，供希尔娅/用户判断核心功能。
 /// 只读仓库头部几行，不导入任何东西。
 pub fn inspect_source(source: &str) -> Result<Vec<(String, String)>> {
     let dir = resolve_source(source)?;
@@ -238,7 +238,7 @@ fn read_header_lines(path: &Path, limit: usize) -> String {
 }
 
 /// 导入工具包：source 为本地目录或 Git 仓库 URL（https/git@）。
-/// `only` 非空时只导入指定的候选（GQY 理解项目后挑核心功能）。
+/// `only` 非空时只导入指定的候选（希尔娅理解项目后挑核心功能）。
 pub fn import_tools(
     paths: &GqyPaths,
     source: &str,
@@ -263,7 +263,7 @@ pub fn import_tools(
         eprintln!("⚠ 仓库没有 LICENSE 文件（默认为「保留所有权利」），导入仅供个人使用");
     } else if license.kind == LicenseKind::Copyleft {
         eprintln!(
-            "ℹ 许可证 {spdx} 为传染性许可：随工具包分发需保持同一许可证（GQY 本体 GPL-3.0）",
+            "ℹ 许可证 {spdx} 为传染性许可：随工具包分发需保持同一许可证（希尔娅本体 GPL-3.0）",
             spdx = license.spdx
         );
     }
@@ -280,12 +280,12 @@ pub fn import_tools(
             wanted.iter().any(|w| *w == entry.path || *w == file_name)
         });
         if entries.is_empty() {
-            bail!("--only 指定的候选都不存在（先 gqy tools inspect 查看候选）");
+            bail!("--only 指定的候选都不存在（先 hilia tools inspect 查看候选）");
         }
     }
     if entries.is_empty() {
         bail!(
-            "{} 里没有找到工具（需要 gqy-tools.json/manifest.json 清单，或可执行文件）",
+            "{} 里没有找到工具（需要 hilia-tools.json/manifest.json 清单，或可执行文件）",
             dir.display()
         );
     }
@@ -356,7 +356,7 @@ pub fn import_tools(
     let manifest = json!({ "scripts": merged });
     fs::write(index_path, serde_json::to_string_pretty(&manifest)?)?;
 
-    // 识别仓库的 GQY Skill 结构（skills/<name>/SKILL.md），一并导入
+    // 识别仓库的 希尔娅 Skill 结构（skills/<name>/SKILL.md），一并导入
     // 到标准 skills 目录，load_skill 即可加载，长期可用
     let mut imported_skills = Vec::new();
     let skills_root = dir.join("skills");
@@ -480,7 +480,7 @@ pub fn list_tools(paths: &GqyPaths) -> Result<Vec<(String, usize, String)>> {
 }
 
 fn load_entries(dir: &Path) -> Result<Vec<ScriptEntry>> {
-    for manifest_name in ["gqy-tools.json", "manifest.json", "index.json"] {
+    for manifest_name in ["hilia-tools.json", "manifest.json", "index.json"] {
         let manifest_path = dir.join(manifest_name);
         if !manifest_path.is_file() {
             continue;
@@ -532,7 +532,7 @@ fn auto_scan(dir: &Path) -> Result<Vec<ScriptEntry>> {
                 .to_string_lossy()
                 .to_string();
             let description = read_description(&path);
-            // GQY 要求工具描述非空（否则注册被拒）；没有 Description 注释时
+            // 希尔娅要求工具描述非空（否则注册被拒）；没有 Description 注释时
             // 生成带文件名的默认描述，保证工具可用
             let description = if description.is_empty() {
                 format!(
@@ -661,8 +661,8 @@ mod tests {
     #[test]
     fn license_copied_into_package_dir_on_import() {
         let root = tempfile::tempdir().unwrap().into_path();
-        let old = std::env::var_os("GQY_HOME");
-        std::env::set_var("GQY_HOME", &root);
+        let old = std::env::var_os("HILIA_HOME");
+        std::env::set_var("HILIA_HOME", &root);
         let paths = crate::paths::GqyPaths::new().unwrap();
 
         // 模拟一个带 LICENSE 的本地工具目录
@@ -671,7 +671,7 @@ mod tests {
         write_license(&src, "LICENSE", "MIT License\nPermission is hereby granted, free of charge...");
         std::fs::write(src.join("hello.sh"), "#!/bin/sh\necho hello\n").unwrap();
         std::fs::write(
-            src.join("gqy-tools.json"),
+            src.join("hilia-tools.json"),
             r#"{"scripts":[{"id":"hello","description":"say hello","path":"hello.sh"}]}"#,
         )
         .unwrap();
@@ -686,9 +686,9 @@ mod tests {
         assert!(listed.iter().any(|(name, _, license)| name == "testpkg" && license == "MIT"));
 
         if let Some(v) = old {
-            std::env::set_var("GQY_HOME", v);
+            std::env::set_var("HILIA_HOME", v);
         } else {
-            std::env::remove_var("GQY_HOME");
+            std::env::remove_var("HILIA_HOME");
         }
     }
 }

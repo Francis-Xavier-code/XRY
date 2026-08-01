@@ -297,8 +297,8 @@ impl MemoryStore {
             let skill_file = entry.path().join("SKILL.md");
             let raw = std::fs::read_to_string(&skill_file).unwrap_or_default();
             if raw.contains("Auto-learned method from assistant conversation")
-                || raw.contains("Auto-learned method from GQY conversation")
-                || raw.contains("generated_by: gqy")
+                || raw.contains("Auto-learned method from Hilia conversation")
+                || raw.contains("generated_by: hilia")
             {
                 std::fs::remove_dir_all(entry.path())?;
             }
@@ -865,7 +865,7 @@ mod tests {
             cache_dir: temp.path().join("cache"),
             state_dir: temp.path().join("state"),
             pictures_dir: temp.path().join("pictures"),
-            fish_hook_file: temp.path().join("fish/gqy.fish"),
+            fish_hook_file: temp.path().join("fish/hilia.fish"),
             bash_hook_file: temp.path().join("shell/bash-hook.sh"),
             zsh_hook_file: temp.path().join("shell/zsh-hook.zsh"),
             scripts_dir: temp.path().join("config/scripts"),

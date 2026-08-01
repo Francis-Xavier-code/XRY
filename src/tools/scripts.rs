@@ -525,7 +525,37 @@ async fn run_script(
         serde_json::to_string(args).unwrap_or_default()
     };
 
-    let mut command = Command::new(&script_path);
+    // Windows 上脚本不能直接执行：按扩展名选择解释器
+    // （.ps1 → powershell；.py → python；.cmd/.bat → cmd；其余尝试直接运行）
+    let mut command = if cfg!(windows) {
+        match script_path.extension().and_then(|ext| ext.to_str()) {
+            Some("ps1") => {
+                let mut c = Command::new("powershell");
+                c.args([
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                ])
+                .arg(&script_path);
+                c
+            }
+            Some("py") => {
+                let mut c = Command::new("python");
+                c.arg(&script_path);
+                c
+            }
+            Some("cmd") | Some("bat") => {
+                let mut c = Command::new("cmd");
+                c.args(["/C"]).arg(&script_path);
+                c
+            }
+            _ => Command::new(&script_path),
+        }
+    } else {
+        Command::new(&script_path)
+    };
     command.stdin(Stdio::piped());
     command.stdout(Stdio::piped());
     command.stderr(Stdio::piped());
@@ -608,7 +638,7 @@ fn register_script_tools(registry: &mut ToolRegistry, scripts_dir: PathBuf) {
                 },
                 "description": {
                     "type": "string",
-                    "description": t("Optional tool description override. If omitted, GQY reads the script header lines `Description:`/`description:` or `描述：` and sends only one localized description to the AI.", "可选的工具描述覆盖。省略时 GQY 会读取脚本头部的 `Description:`/`description:` 或 `描述：`，并只向 AI 提供一条本地化描述。")
+                    "description": t("Optional tool description override. If omitted, Hilia reads the script header lines `Description:`/`description:` or `描述：` and sends only one localized description to the AI.", "可选的工具描述覆盖。省略时 希尔娅 会读取脚本头部的 `Description:`/`description:` 或 `描述：`，并只向 AI 提供一条本地化描述。")
                 },
                 "path": {
                     "type": "string",

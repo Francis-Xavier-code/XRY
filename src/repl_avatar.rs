@@ -1,6 +1,6 @@
 use std::io::Write;
 
-/// 终端启动横幅：彩色渐变文字版 GQY（oh-my-logo 风格）。
+/// 终端启动横幅：彩色渐变文字版希尔娅（oh-my-logo 风格）。
 /// 所有终端通用（24bit ANSI 颜色），iTerm2/kitty/Terminal.app 均可显示。
 #[allow(dead_code)]
 const DISPLAY_HEIGHT: u32 = 96;
@@ -36,13 +36,13 @@ const GRADIENT: [[u8; 3]; 5] = [
     [203, 213, 225], // #cbd5e1 银灰
 ];
 
-const SLOGAN: &str = "顾清影 · 活在终端里的二次元少女";
+const SLOGAN: &str = "希尔娅 · 活在 Windows 里的 AI 助理";
 
 pub fn print_if_supported(out: &mut impl Write) {
-    let _ = print_gqy_logo(out);
+    let _ = print_hilia_logo(out);
 }
 
-fn print_gqy_logo(out: &mut impl Write) -> std::io::Result<()> {
+fn print_hilia_logo(out: &mut impl Write) -> std::io::Result<()> {
     for (row, _pattern) in LETTERS[0].1.iter().enumerate() {
         let [r, g, b] = GRADIENT[row];
         let mut line = String::new();
@@ -75,7 +75,7 @@ fn print_gqy_logo(out: &mut impl Write) -> std::io::Result<()> {
 
 /// 保留的图形头像能力（iTerm2 / kitty 图形协议），供未来切换使用。
 #[allow(dead_code)]
-const AVATAR_PNG: &[u8] = include_bytes!("../pics/GQY-avatar.png");
+const AVATAR_PNG: &[u8] = include_bytes!("../pics/Hilia-avatar.png");
 
 #[allow(dead_code)]
 fn resized_png() -> Option<Vec<u8>> {

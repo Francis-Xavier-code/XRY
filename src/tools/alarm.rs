@@ -14,8 +14,8 @@ pub fn register(registry: &mut ToolRegistry, paths: GqyPaths) {
     registry.register(ToolSpec::new(
         "pomodoro",
         t(
-            "Start a pomodoro focus cycle: work 25 minutes then break 5 minutes, repeating until cancelled. Rings with GQY's sound at each boundary. Cancel with cancel_alarm.",
-            "开启番茄钟专注循环：工作 25 分钟后休息 5 分钟，循环直到取消。每个阶段切换时用 GQY 内置声音提醒。取消用 cancel_alarm。",
+            "Start a pomodoro focus cycle: work 25 minutes then break 5 minutes, repeating until cancelled. Rings with Hilia's sound at each boundary. Cancel with cancel_alarm.",
+            "开启番茄钟专注循环：工作 25 分钟后休息 5 分钟，循环直到取消。每个阶段切换时用 希尔娅 内置声音提醒。取消用 cancel_alarm。",
         ),
         json!({
             "type": "object",
@@ -35,8 +35,8 @@ pub fn register(registry: &mut ToolRegistry, paths: GqyPaths) {
     registry.register(ToolSpec::new(
         "set_alarm",
         t(
-            "Set a local alarm, countdown, or repeating reminder. Accepts duration like 30s, 10m, 1h 30m, or a time like 14:30. Set repeat to a duration to ring every interval (e.g. pomodoro 25m / break 5m). Runs in a background GQY process with GQY's embedded sound.",
-            "设置本地闹钟、倒计时或周期提醒。支持 30s、10m、1h 30m 或 14:30。repeat 传时长可周期性响铃（如番茄钟 25m / 休息 5m）。在后台 GQY 进程运行并使用内置声音。",
+            "Set a local alarm, countdown, or repeating reminder. Accepts duration like 30s, 10m, 1h 30m, or a time like 14:30. Set repeat to a duration to ring every interval (e.g. pomodoro 25m / break 5m). Runs in a background Hilia process with GQY's embedded sound.",
+            "设置本地闹钟、倒计时或周期提醒。支持 30s、10m、1h 30m 或 14:30。repeat 传时长可周期性响铃（如番茄钟 25m / 休息 5m）。在后台 hilia 进程运行并使用内置声音。",
         ),
         json!({
             "type": "object",
@@ -44,7 +44,7 @@ pub fn register(registry: &mut ToolRegistry, paths: GqyPaths) {
                 "time": { "type": "string", "description": t("Duration or clock time.", "时长或时钟时间。") },
                 "label": { "type": "string", "description": t("Optional alarm label.", "可选闹钟标签。") },
                 "repeat": { "type": "string", "description": t("Optional repeat interval (e.g. 25m, 1h). Rings every interval until cancelled.", "可选重复间隔（如 25m、1h）。按间隔周期性响铃直到取消。") },
-                "audio_file": { "type": "string", "description": t("Optional local .wav or .mp3 audio file to play instead of GQY's built-in alarm sound.", "可选本地 .wav 或 .mp3 音频文件，用它替代 GQY 内置闹钟音。") }
+                "audio_file": { "type": "string", "description": t("Optional local .wav or .mp3 audio file to play instead of Hilia's built-in alarm sound.", "可选本地 .wav 或 .mp3 音频文件，用它替代 希尔娅 内置闹钟音。") }
             },
             "required": ["time"],
             "additionalProperties": false
@@ -202,7 +202,7 @@ async fn set_alarm(args: Value, paths: GqyPaths) -> Result<String> {
     let label = args
         .get("label")
         .and_then(Value::as_str)
-        .unwrap_or("GQY alarm")
+        .unwrap_or("Hilia alarm")
         .trim();
     let audio_file = args
         .get("audio_file")

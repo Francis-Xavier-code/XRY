@@ -711,7 +711,7 @@ fn sanitize_library(value: &str) -> String {
 }
 
 fn builtin_library_dir(paths: &GqyPaths, library: &str) -> PathBuf {
-    if let Some(path) = std::env::var_os("GQY_MEMES_DIR") {
+    if let Some(path) = std::env::var_os("HILIA_MEMES_DIR") {
         return PathBuf::from(path).join(library);
     }
     // share 基目录统一布局：brew/app 为 <share>/memes，源码树为 <share>/src/memes
@@ -1086,7 +1086,7 @@ mod tests {
 
     #[test]
     fn sanitize_library_keeps_simple_names() {
-        assert_eq!(sanitize_library("GQY"), "gqy");
+        assert_eq!(sanitize_library("Hilia"), "hilia");
         assert_eq!(sanitize_library("默认 表情"), "default");
     }
 

@@ -282,7 +282,7 @@ fn primary_footer_text(text: &str) -> String {
 }
 
 #[derive(Debug, Parser)]
-#[command(name = "gqy", version, about = "GQY CLI AI Agent")]
+#[command(name = "gqy", version, about = "希尔娅 CLI AI Agent")]
 pub struct Cli {
     #[arg(long)]
     pub plan: bool,
@@ -347,7 +347,7 @@ fn extract_debug_flag(args: &mut Vec<OsString>) -> bool {
 fn localized_command() -> clap::Command {
     let mut command = Cli::command();
     command = command
-        .about(t("GQY CLI AI Agent", "GQY 命令行 AI 助手"))
+        .about(t("希尔娅 CLI AI Agent", "GQY 命令行 AI 助手"))
         .override_usage(t(
             "gqy [OPTIONS] [MESSAGE]... [COMMAND]",
             "gqy [选项] [消息]... [命令]",
@@ -358,12 +358,12 @@ fn localized_command() -> clap::Command {
             .arg_required_else_help(false)
             .next_help_heading("选项")
             .help_template("{about}\n\n用法: {usage}\n\n命令:\n{subcommands}\n参数:\n{positionals}\n选项:\n{options}\n{after-help}")
-            .after_help("提示：不带参数进入 REPL；直接输入消息会发送一次对话。可在配置界面设置语言，GQY_LANG 可临时覆盖。")
+            .after_help("提示：不带参数进入 REPL；直接输入消息会发送一次对话。可在配置界面设置语言，HILIA_LANG 可临时覆盖。")
             .disable_help_subcommand(true);
     } else {
         command = command
             .after_help(
-                "Tip: run without arguments to enter the REPL; pass MESSAGE to send one chat turn. Set the language in the configuration UI; GQY_LANG is a temporary override.",
+                "Tip: run without arguments to enter the REPL; pass MESSAGE to send one chat turn. Set the language in the configuration UI; HILIA_LANG is a temporary override.",
             )
             .disable_help_subcommand(true);
     }
@@ -819,9 +819,13 @@ pub enum Command {
     Config(ConfigArgs),
     Models(ModelsArgs),
     Variant(VariantArgs),
+    #[cfg(unix)]
     FishInit,
+    #[cfg(unix)]
     BashInit,
+    #[cfg(unix)]
     ZshInit,
+    #[cfg(unix)]
     RemoveShellHook,
     History(HistoryArgs),
     Activity(ActivityArgs),
@@ -893,7 +897,7 @@ pub struct AlarmWorkerArgs {
     pub id: String,
     #[arg(long)]
     pub time: String,
-    #[arg(long, default_value = "GQY alarm")]
+    #[arg(long, default_value = "Hilia alarm")]
     pub label: String,
     #[arg(long)]
     pub state_dir: PathBuf,
@@ -1041,9 +1045,9 @@ pub struct BackupInitArgs {
     pub remote: Option<String>,
     #[arg(long, default_value = "main")]
     pub branch: String,
-    #[arg(long, default_value = "GQY Memory")]
+    #[arg(long, default_value = "Hilia Memory")]
     pub name: String,
-    #[arg(long, default_value = "gqy@localhost")]
+    #[arg(long, default_value = "hilia@localhost")]
     pub email: String,
     #[arg(long)]
     pub ssh_key: Option<PathBuf>,
@@ -1063,9 +1067,9 @@ pub struct BackupRestoreArgs {
     pub remote: String,
     #[arg(long, default_value = "main")]
     pub branch: String,
-    #[arg(long, default_value = "GQY Restore")]
+    #[arg(long, default_value = "Hilia Restore")]
     pub name: String,
-    #[arg(long, default_value = "gqy@localhost")]
+    #[arg(long, default_value = "hilia@localhost")]
     pub email: String,
     #[arg(long)]
     pub ssh_key: Option<PathBuf>,
@@ -1390,9 +1394,13 @@ pub async fn run(cli: Cli, paths: GqyPaths) -> Result<()> {
         Some(Command::Config(args)) => run_config(&paths, args).await,
         Some(Command::Models(args)) => run_models(&paths, args),
         Some(Command::Variant(args)) => run_variant(&paths, args),
+        #[cfg(unix)]
         Some(Command::FishInit) => shell::fish::install(&paths),
+        #[cfg(unix)]
         Some(Command::BashInit) => shell::bash::install(&paths),
+        #[cfg(unix)]
         Some(Command::ZshInit) => shell::zsh::install(&paths),
+        #[cfg(unix)]
         Some(Command::RemoveShellHook) => remove_shell_hooks(&paths),
         Some(Command::History(args)) => run_history(&paths, args),
         Some(Command::Activity(args)) => run_activity(&paths, args),
@@ -1485,6 +1493,7 @@ fn run_init(paths: &GqyPaths, kind: InitKind) -> Result<()> {
     if interactive {
         println!("\n{}\n", t("Initialization complete.", "初始化完成。"));
         std::thread::sleep(Duration::from_millis(420));
+        #[cfg(unix)]
         prompt_shell_init_menu(paths)?;
     } else {
         println!(
@@ -1496,7 +1505,7 @@ fn run_init(paths: &GqyPaths, kind: InitKind) -> Result<()> {
     Ok(())
 }
 
-/// 首次运行时：若用户知识库为空且随包携带默认 kb 目录（brew 的 share/gqy/kb），
+/// 首次运行时：若用户知识库为空且随包携带默认 kb 目录（brew 的 share/hilia/kb），
 /// 自动导入，让 `gqy kb search` 开箱即用（幂等：已有内容则跳过）。
 fn seed_default_knowledge_base(paths: &GqyPaths, interactive: bool) -> Result<()> {
     let kb_root = paths.data_dir.join("kb");
@@ -1536,6 +1545,8 @@ fn print_init_step(interactive: bool, label: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
+/// Windows 无 shell hook 概念（自然语言在 PowerShell 里直接输入 hilia 使用），此菜单仅 Unix。
+#[cfg(unix)]
 fn prompt_shell_init_menu(paths: &GqyPaths) -> Result<()> {
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
         return Ok(());
@@ -1556,6 +1567,7 @@ fn prompt_shell_init_menu(paths: &GqyPaths) -> Result<()> {
     }
 }
 
+#[cfg(unix)]
 fn select_shell_hook() -> Result<Option<&'static str>> {
     let options = [
         (t("Skip", "跳过"), None),
@@ -1630,6 +1642,7 @@ fn read_shell_menu_key() -> Result<KeyCode> {
     }
 }
 
+#[cfg(unix)]
 fn remove_shell_hooks(paths: &GqyPaths) -> Result<()> {
     let removed = shell::fish::uninstall(paths)?;
     let removed = shell::bash::uninstall(paths)? || removed;
@@ -1746,7 +1759,7 @@ fn run_alarm_cmd(paths: &GqyPaths, args: AlarmArgs) -> Result<()> {
             if !all {
                 println!(
                     "{}",
-                    t("use `gqy alarm stop --all` to stop all alarm workers", "使用 `gqy alarm stop --all` 停止全部闹钟")
+                    t("use `hilia alarm stop --all` to stop all alarm workers", "使用 `hilia alarm stop --all` 停止全部闹钟")
                 );
                 return Ok(());
             }
@@ -3123,6 +3136,8 @@ async fn run_chat_with_images(
     Ok(())
 }
 
+/// 排空终端里已输入但未消费的缓冲（Unix 用 O_NONBLOCK；Windows 无此问题，直接跳过）。
+#[cfg(unix)]
 fn drain_stdin() {
     use std::os::fd::AsRawFd;
 
@@ -3152,6 +3167,9 @@ fn drain_stdin() {
 
     let _ = unsafe { libc::fcntl(fd, libc::F_SETFL, flags) };
 }
+
+#[cfg(not(unix))]
+fn drain_stdin() {}
 
 const STDIN_MAX_CHARS: usize = 50_000;
 const STDIN_TIMEOUT_SECS: u64 = 5;
@@ -7434,7 +7452,7 @@ mod repl_input_tests {
             cache_dir: root.join("cache"),
             state_dir: root.join("state"),
             pictures_dir: root.join("pictures"),
-            fish_hook_file: root.join("fish/gqy.fish"),
+            fish_hook_file: root.join("fish/hilia.fish"),
             bash_hook_file: root.join("shell/bash-hook.sh"),
             zsh_hook_file: root.join("shell/zsh-hook.zsh"),
             scripts_dir: root.join("config/scripts"),
@@ -8743,7 +8761,7 @@ pub fn maybe_auto_archive(paths: &GqyPaths, keep_days: u64) {
     );
 }
 
-/// 查看活动日志（`gqy activity`）：GQY 干了什么的流水账。
+/// 查看活动日志（`hilia activity`）：GQY 干了什么的流水账。
 /// 默认不进对话上下文（零 token），需要时查询。
 fn run_activity(paths: &GqyPaths, args: ActivityArgs) -> Result<()> {
     let entries = crate::activity::query(paths, args.search.as_deref(), args.limit)?;
@@ -9157,7 +9175,7 @@ fn run_skills(paths: &GqyPaths, args: SkillsArgs) -> Result<()> {
             for name in skill_names(paths)? {
                 let dir = paths.skills_dir.join(&name);
                 let raw = std::fs::read_to_string(dir.join("SKILL.md")).unwrap_or_default();
-                if raw.contains("generated_by: gqy") && dir.join(".disabled").exists() {
+                if raw.contains("generated_by: hilia") && dir.join(".disabled").exists() {
                     std::fs::remove_dir_all(dir)?;
                     removed += 1;
                 }

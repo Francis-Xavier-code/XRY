@@ -635,7 +635,7 @@ impl Agent {
             self.state.add_usage(&usage)?;
         }
         // 自动备份移出对话热路径：后台执行，且内部有 30 分钟节流。
-        // 一次性 CLI（gqy "问题"）退出前会通过 settle_pending_backup 等它完成。
+        // 一次性 CLI（hilia "问题"）退出前会通过 settle_pending_backup 等它完成。
         let backup_paths = self.paths.clone();
         let backup_task = tokio::task::spawn_blocking(move || {
             if let Err(error) = crate::backup::maybe_auto_backup(&backup_paths) {
@@ -1313,7 +1313,7 @@ impl Agent {
                     None
                 };
                 messages.push(ChatMessage::tool(call.id, output.clone()));
-                // 活动日志：记录工具调用成败（默认不进上下文，gqy activity 可查）
+                // 活动日志：记录工具调用成败（默认不进上下文，hilia activity 可查）
                 crate::activity::record_tool(&self.paths, &call.function.name, tool_succeeded);
                 if tool_succeeded && call.function.name == "load_tools" {
                     let loaded = loaded_items_from_output(&output);
@@ -3671,7 +3671,7 @@ mod tests {
             cache_dir: root.join("cache"),
             state_dir: root.join("state"),
             pictures_dir: root.join("pictures"),
-            fish_hook_file: root.join("fish/gqy.fish"),
+            fish_hook_file: root.join("fish/hilia.fish"),
             bash_hook_file: root.join("shell/bash-hook.sh"),
             zsh_hook_file: root.join("shell/zsh-hook.zsh"),
             scripts_dir: root.join("config/scripts"),

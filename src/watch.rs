@@ -1,9 +1,9 @@
 //! 管家监控（主动对话）：后台采样系统进程，检测到异常（CPU 突增/内存吃紧/未知进程）
 //! 时，先本地判断是否值得打扰，再通过 WebUI 的 queue API 给运行中的会话入队
-//! 一条「主动消息」，让顾清影先判断再询问用户。
+//! 一条「主动消息」，让希尔娅先判断再询问用户。
 //!
-//! 用法：`gqy watch --every 30s`（前台跑）或由 LaunchAgent 托管。
-//! 设计原则：采样开销极小（一条 ps 命令），默认不打扰（阈值内静默）。
+//! 用法：`hilia watch --every 30s`（前台跑）或由计划任务/托盘托管。
+//! 设计原则：采样开销极小（一条 ps / PowerShell 命令），默认不打扰（阈值内静默）。
 
 use crate::paths::GqyPaths;
 use anyhow::{Context, Result};
@@ -13,13 +13,26 @@ use std::process::Command;
 pub struct WatchSample {
     /// 超过 CPU 阈值的进程（名字, CPU%, 内存%）
     pub hot_processes: Vec<(String, f32, f32)>,
-    /// 系统整体内存压力（%）
+    /// 系统整体内存占用（%）
     pub memory_pressure: f32,
 }
 
-/// 采样一次系统状态。macOS 用 `ps -axo` 列全部进程并取 CPU/内存。
-/// 返回 (样本, 是否有值得报告的异常)。
+/// 采样一次系统状态。
+/// - Unix：`ps -axo` 列全部进程并取 CPU/内存
+/// - Windows：PowerShell 取进程 WorkingSet 与总物理内存（CPU% 需双采样，这里以内存为主）
 pub fn sample_system() -> Result<WatchSample> {
+    #[cfg(unix)]
+    {
+        sample_system_unix()
+    }
+    #[cfg(not(unix))]
+    {
+        sample_system_windows()
+    }
+}
+
+#[cfg(unix)]
+fn sample_system_unix() -> Result<WatchSample> {
     let output = Command::new("ps")
         .args(["-axo", "%cpu=,%mem=,comm="])
         .output()
@@ -50,14 +63,74 @@ pub fn sample_system() -> Result<WatchSample> {
     })
 }
 
+/// Windows 采样：内存占用取各进程 WorkingSet / 总物理内存；
+/// CPU 时间（秒）作为热点候选的辅助信号（无法一次性拿到 CPU%）。
+#[cfg(not(unix))]
+fn sample_system_windows() -> Result<WatchSample> {
+    let ps = "$procs = Get-Process -ErrorAction SilentlyContinue | \
+              Select-Object ProcessName, CPU, @{n='MB';e={[math]::Round($_.WorkingSet64/1MB,1)}}; \
+              $totalGb = [math]::Round((Get-CimInstance Win32_OperatingSystem).TotalVisibleMemorySize / 1KB / 1GB, 2); \
+              @{ procs = @($procs); total_gb = $totalGb } | ConvertTo-Json -Compress -Depth 3";
+    let output = Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", ps])
+        .output()
+        .with_context(|| "failed to run PowerShell process sampling")?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "PowerShell sampling failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(stdout.trim())
+        .unwrap_or(serde_json::Value::Null);
+    let total_gb = parsed.get("total_gb").and_then(|v| v.as_f64()).unwrap_or(16.0) as f32;
+    let items: Vec<&serde_json::Value> = match parsed.get("procs") {
+        Some(serde_json::Value::Array(ref arr)) => arr.iter().collect(),
+        Some(value @ serde_json::Value::Object(_)) => vec![value],
+        _ => Vec::new(),
+    };
+    let mut hot = Vec::new();
+    let mut total_mem = 0.0f32;
+    for item in items {
+        let name = item.get("ProcessName").and_then(|v| v.as_str()).unwrap_or("");
+        let mb = item.get("MB").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+        total_mem += mb;
+        // 内存占用 ≥ 500MB 或 CPU 累计时间 ≥ 600 秒的进程作为热点候选
+        if mb >= 500.0 && !is_noise_process(name) {
+            let cpu_secs = item.get("CPU").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+            hot.push((name.to_string(), cpu_secs.min(999.0), mb));
+        }
+    }
+    hot.sort_by(|a, b| b.2.total_cmp(&a.2));
+    hot.truncate(5);
+    // 内存压力：总 WorkingSet / 总物理内存
+    let memory_pressure = if total_gb > 0.0 {
+        (total_mem / 1024.0 / total_gb) * 100.0
+    } else {
+        0.0
+    };
+    Ok(WatchSample {
+        hot_processes: hot,
+        memory_pressure,
+    })
+}
+
 /// 排除不值得报告的进程（监控工具自身、系统常驻等）。
 fn is_noise_process(comm: &str) -> bool {
-    let name = comm.rsplit('/').next().unwrap_or(comm);
+    let name = comm.rsplit(['/', '\\']).next().unwrap_or(comm);
     matches!(
         name,
-        "gqy" | "ps" | "top" | "GQYMenuBar" | "WindowServer" | "kernel_task"
-            | "launchd" | "mds" | "mdworker" | "Spotlight" | "backupd" | "cloudd"
-            | "VTDecoderXPCService" | "rapportd" | "opendirectoryd"
+        "hilia" | "hilia-tray" | "ps" | "top" | "powershell" | "GQYMenuBar"
+            | "WindowServer" | "kernel_task" | "launchd" | "mds" | "mdworker"
+            | "Spotlight" | "backupd" | "cloudd" | "VTDecoderXPCService" | "rapportd"
+            | "opendirectoryd"
+            // Windows 系统常驻
+            | "System" | "Idle" | "Registry" | "Memory Compression" | "dwm" | "svchost"
+            | "MsMpEng" | "SearchHost" | "SearchIndexer" | "RuntimeBroker"
+            | "ShellExperienceHost" | "StartMenuExperienceHost" | "TextInputHost"
+            | "winlogon" | "csrss" | "lsass" | "services" | "smss" | "spoolsv"
+            | "WmiPrvSE" | "fontdrvhost" | "ctfmon" | "conhost" | "wininit"
     ) || name.starts_with("zcode")
 }
 
@@ -69,7 +142,7 @@ pub fn should_alert(sample: &WatchSample) -> bool {
     heavy >= 1 || sample.hot_processes.len() >= 2 || sample.memory_pressure >= 90.0
 }
 
-/// 构造主动消息（给顾清影的判断材料，不直接打扰用户）。
+/// 构造主动消息（给希尔娅的判断材料，不直接打扰用户）。
 pub fn alert_message(sample: &WatchSample) -> String {
     let procs = sample
         .hot_processes
@@ -89,7 +162,7 @@ pub fn alert_message(sample: &WatchSample) -> String {
 /// 需要 WebUI 在跑（默认 127.0.0.1:4096）；不在跑就静默跳过。
 pub fn enqueue_alert(paths: &GqyPaths, message: &str) -> Result<bool> {
     let _ = paths;
-    let port = std::env::var("GQY_WEB_PORT")
+    let port = std::env::var("HILIA_WEB_PORT")
         .ok()
         .and_then(|value| value.parse::<u16>().ok())
         .unwrap_or(4096);

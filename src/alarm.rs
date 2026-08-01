@@ -135,7 +135,7 @@ pub fn cancel(paths: &GqyPaths, id: &str) -> Result<bool> {
 }
 
 /// 全局停止：扫描 `state/alarms/*.pid`，终止所有仍在运行的 worker 并清理记录。
-/// 返回被终止的 worker 数量。用于 `gqy alarm stop --all`（孤儿兜底）。
+/// 返回被终止的 worker 数量。用于 `hilia alarm stop --all`（孤儿兜底）。
 pub fn stop_all(paths: &GqyPaths) -> Result<usize> {
     let alarms_dir = paths.state_dir.join("alarms");
     let mut stopped = 0usize;
@@ -458,8 +458,8 @@ mod cancel_tests {
             zsh_hook_file: root.join("config/zsh-hook"),
             scripts_dir: root.join("config/scripts"),
             system_scripts_dir: root.join("scripts"),
-            share_dir: root.join("share/gqy"),
-            kb_dir: root.join("share/gqy/kb"),
+            share_dir: root.join("share/hilia"),
+            kb_dir: root.join("share/hilia/kb"),
         }
     }
 

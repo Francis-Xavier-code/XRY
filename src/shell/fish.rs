@@ -48,8 +48,8 @@ fn completion_entries() -> [(&'static str, &'static str); 14] {
         (
             "remove-shell-hook",
             t(
-                "Remove installed GQY shell hooks",
-                "安全删除已安装的 GQY shell hook",
+                "Remove installed 希尔娅 shell hooks",
+                "安全删除已安装的 希尔娅 shell hook",
             ),
         ),
         ("history", t("Show conversation history", "显示会话历史")),
@@ -70,19 +70,19 @@ pub fn hook() -> String {
     let mut output = String::new();
     for (command, description) in completion_entries() {
         output.push_str(&format!(
-            "complete -c gqy -n __fish_use_subcommand -f -a {command} -d '{description}'\n"
+            "complete -c hilia -n __fish_use_subcommand -f -a {command} -d '{description}'\n"
         ));
     }
     output.push('\n');
     output.push_str(
-        r#"function __gqy_paste
-    set -l output (gqy --clipboard-paste 2>/dev/null)
+        r#"function __hilia_paste
+    set -l output (hilia --clipboard-paste 2>/dev/null)
     if test $status -eq 0; and test -n "$output"
-        if not set -q __gqy_image_counter
-            set -g __gqy_image_counter 0
+        if not set -q __hilia_image_counter
+            set -g __hilia_image_counter 0
         end
-        set __gqy_image_counter (math $__gqy_image_counter + 1)
-        set output (string replace "Image 1" "Image $__gqy_image_counter" -- $output)
+        set __hilia_image_counter (math $__hilia_image_counter + 1)
+        set output (string replace "Image 1" "Image $__hilia_image_counter" -- $output)
         commandline -i -- $output
         commandline -f repaint
     else
@@ -90,33 +90,33 @@ pub fn hook() -> String {
     end
 end
 
-bind \cv __gqy_paste
+bind \cv __hilia_paste
 
-function __gqy_insert_newline
+function __hilia_insert_newline
     commandline -f expand-abbr
     commandline -i \n
 end
 
-bind ctrl-j __gqy_insert_newline
-bind \cj __gqy_insert_newline
-bind -M insert ctrl-j __gqy_insert_newline
-bind -M insert \cj __gqy_insert_newline
+bind ctrl-j __hilia_insert_newline
+bind \cj __hilia_insert_newline
+bind -M insert ctrl-j __hilia_insert_newline
+bind -M insert \cj __hilia_insert_newline
 
-function __gqy_wrap_fish_prompt
-    functions -q __gqy_original_fish_prompt; and return
+function __hilia_wrap_fish_prompt
+    functions -q __hilia_original_fish_prompt; and return
     functions -q fish_prompt; or fish_prompt >/dev/null 2>/dev/null
     functions -q fish_prompt; or return
 
-    functions -c fish_prompt __gqy_original_fish_prompt
+    functions -c fish_prompt __hilia_original_fish_prompt
     function fish_prompt
-        if set -q __gqy_pending_buffer
+        if set -q __hilia_pending_buffer
             printf '\e[?25l'
         end
-        __gqy_original_fish_prompt
+        __hilia_original_fish_prompt
     end
 end
 
-function __gqy_replay_buffer
+function __hilia_replay_buffer
     set -l buffer $argv[1]
     set -l lines (string split \n -- "$buffer")
     if test (count $lines) -gt 0
@@ -136,44 +136,44 @@ function __gqy_replay_buffer
     end
 end
 
-function __gqy_restore_cursor
+function __hilia_restore_cursor
     printf '\e[?25h'
-    set -e __gqy_cursor_hidden
+    set -e __hilia_cursor_hidden
 end
 
-function __gqy_on_prompt --on-event fish_prompt
-    set -q __gqy_pending_buffer; or return
+function __hilia_on_prompt --on-event fish_prompt
+    set -q __hilia_pending_buffer; or return
 
-    set -l buffer $__gqy_pending_buffer
-    set -e __gqy_pending_buffer
-    set -e __gqy_image_counter
+    set -l buffer $__hilia_pending_buffer
+    set -e __hilia_pending_buffer
+    set -e __hilia_image_counter
 
-    trap __gqy_restore_cursor INT TERM EXIT
-    __gqy_replay_buffer "$buffer"
-    printf '%s' "$buffer" | gqy --shell-intercept --shell fish --stdin
-    set -l gqy_status $status
+    trap __hilia_restore_cursor INT TERM EXIT
+    __hilia_replay_buffer "$buffer"
+    printf '%s' "$buffer" | hilia --shell-intercept --shell fish --stdin
+    set -l hilia_status $status
     trap - INT TERM EXIT
-    __gqy_restore_cursor
-    return $gqy_status
+    __hilia_restore_cursor
+    return $hilia_status
 end
 
-function __gqy_execute_or_continue
+function __hilia_execute_or_continue
     commandline --is-valid
     set -l valid_status $status
     if test $valid_status -eq 2
         commandline -i \n
         commandline -f repaint
     else
-        set -e __gqy_image_counter
+        set -e __hilia_image_counter
         commandline -f execute
     end
 end
 
-function __gqy_buffer_is_multiline
+function __hilia_buffer_is_multiline
     test (string split \n -- "$argv[1]" | count) -gt 1
 end
 
-function __gqy_multiline_has_unknown_command
+function __hilia_multiline_has_unknown_command
     set -l buffer $argv[1]
     for line in (string split \n -- "$buffer")
         set -l trimmed (string trim -- "$line")
@@ -197,46 +197,46 @@ function __gqy_multiline_has_unknown_command
     return 1
 end
 
-function __gqy_accept_line
+function __hilia_accept_line
     status is-interactive; or return
 
     commandline -f expand-abbr
     set -l buffer (commandline -b | string collect -N)
     set -l trimmed (string trim -- "$buffer")
     if test -z "$trimmed"
-        __gqy_execute_or_continue
+        __hilia_execute_or_continue
         return
     end
 
-    if not __gqy_buffer_is_multiline "$buffer"
-        __gqy_execute_or_continue
+    if not __hilia_buffer_is_multiline "$buffer"
+        __hilia_execute_or_continue
         return
     end
 
-    if not __gqy_multiline_has_unknown_command "$buffer"
-        __gqy_execute_or_continue
+    if not __hilia_multiline_has_unknown_command "$buffer"
+        __hilia_execute_or_continue
         return
     end
 
-    set -e __gqy_image_counter
-    __gqy_wrap_fish_prompt
-    set -g __gqy_cursor_hidden 1
+    set -e __hilia_image_counter
+    __hilia_wrap_fish_prompt
+    set -g __hilia_cursor_hidden 1
     history append -- "$buffer"
-    set -g __gqy_pending_buffer "$buffer"
+    set -g __hilia_pending_buffer "$buffer"
     commandline -b -- ""
     printf '\e[?25l'
     commandline -f execute
 end
 
-bind enter __gqy_accept_line
-bind \r __gqy_accept_line
-bind -M insert enter __gqy_accept_line
-bind -M insert \r __gqy_accept_line
+bind enter __hilia_accept_line
+bind \r __hilia_accept_line
+bind -M insert enter __hilia_accept_line
+bind -M insert \r __hilia_accept_line
 
 function fish_command_not_found
     status is-interactive; or return 127
 
-    set -e __gqy_image_counter
+    set -e __hilia_image_counter
 
     set -l command $argv
     if test (count $command) -eq 0
@@ -246,10 +246,10 @@ function fish_command_not_found
     set -l text (string join ' ' -- $command)
     string match -qr '[\n\r]' -- $text; and return 127
 
-    # 明显是命令/拼写错误 → 系统报错，不打扰 GQY
-    gqy --shell-classify --shell fish -- $command 2>/dev/null; and return 127
+    # 明显是命令/拼写错误 → 系统报错，不打扰希尔娅
+    hilia --shell-classify --shell fish -- $command 2>/dev/null; and return 127
 
-    gqy --shell-intercept --shell fish -- $command 2>/dev/null
+    hilia --shell-intercept --shell fish -- $command 2>/dev/null
     return 127
 end
 "#,
@@ -280,7 +280,7 @@ pub fn uninstall(paths: &GqyPaths) -> Result<bool> {
     if removed {
         println!(
             "{}: fish",
-            t("removed GQY shell hook", "已移除 GQY shell hook")
+            t("removed 希尔娅 shell hook", "已移除 希尔娅 shell hook")
         );
     }
     Ok(removed)
@@ -305,13 +305,13 @@ mod tests {
         let expected = completion_entries();
         let completion_lines = hook
             .lines()
-            .filter(|line| line.starts_with("complete -c gqy "))
+            .filter(|line| line.starts_with("complete -c hilia "))
             .collect::<Vec<_>>();
 
         assert_eq!(completion_lines.len(), expected.len());
         for (command, description) in expected {
             let completion = format!(
-                "complete -c gqy -n __fish_use_subcommand -f -a {command} -d '{description}'"
+                "complete -c hilia -n __fish_use_subcommand -f -a {command} -d '{description}'"
             );
             assert!(completion_lines.contains(&completion.as_str()));
         }
@@ -320,20 +320,20 @@ mod tests {
     #[test]
     fn fish_hook_defines_paste_binding() {
         let hook = hook();
-        assert!(hook.contains("__gqy_paste"));
-        assert!(hook.contains("bind \\cv __gqy_paste"));
-        assert!(hook.contains("gqy --clipboard-paste"));
+        assert!(hook.contains("__hilia_paste"));
+        assert!(hook.contains("bind \\cv __hilia_paste"));
+        assert!(hook.contains("hilia --clipboard-paste"));
     }
 
     #[test]
     fn fish_hook_defines_enter_binding() {
         let hook = hook();
-        assert!(hook.contains("__gqy_accept_line"));
-        assert!(hook.contains("__gqy_wrap_fish_prompt"));
-        assert!(hook.contains("functions -c fish_prompt __gqy_original_fish_prompt"));
-        assert!(hook.contains("if set -q __gqy_pending_buffer"));
-        assert!(hook.contains("__gqy_replay_buffer"));
-        assert!(hook.contains("__gqy_on_prompt --on-event fish_prompt"));
+        assert!(hook.contains("__hilia_accept_line"));
+        assert!(hook.contains("__hilia_wrap_fish_prompt"));
+        assert!(hook.contains("functions -c fish_prompt __hilia_original_fish_prompt"));
+        assert!(hook.contains("if set -q __hilia_pending_buffer"));
+        assert!(hook.contains("__hilia_replay_buffer"));
+        assert!(hook.contains("__hilia_on_prompt --on-event fish_prompt"));
         assert!(!hook.contains("        fish_prompt\n"));
         assert!(hook.contains("string length --visible"));
         assert!(hook.contains("printf '\\e[?25l'"));
@@ -341,15 +341,15 @@ mod tests {
         assert!(hook.contains("not set_color $fish_color_error 2>/dev/null"));
         assert!(hook.contains("set_color normal"));
         assert!(hook.contains("printf '\\e[?25h'"));
-        assert!(hook.contains("set -g __gqy_cursor_hidden 1"));
-        assert!(hook.contains("set -e __gqy_cursor_hidden"));
-        assert!(hook.contains("return $gqy_status"));
-        assert!(hook.contains("__gqy_execute_or_continue"));
-        assert!(hook.contains("__gqy_buffer_is_multiline"));
+        assert!(hook.contains("set -g __hilia_cursor_hidden 1"));
+        assert!(hook.contains("set -e __hilia_cursor_hidden"));
+        assert!(hook.contains("return $hilia_status"));
+        assert!(hook.contains("__hilia_execute_or_continue"));
+        assert!(hook.contains("__hilia_buffer_is_multiline"));
         assert!(hook.contains("test (string split \\n -- \"$argv[1]\" | count) -gt 1"));
-        assert!(hook.contains("__gqy_multiline_has_unknown_command"));
+        assert!(hook.contains("__hilia_multiline_has_unknown_command"));
         assert!(hook.contains("type -q -- \"$command\"; or return 0"));
-        assert!(hook.contains("set -g __gqy_pending_buffer \"$buffer\""));
+        assert!(hook.contains("set -g __hilia_pending_buffer \"$buffer\""));
         assert!(hook.contains("history append -- \"$buffer\""));
         assert!(hook.contains("commandline -b -- \"\""));
         assert!(hook.contains("commandline -f execute"));
@@ -358,17 +358,17 @@ mod tests {
         assert!(!hook.contains("cancel-commandline"));
         assert!(hook.contains("commandline -b | string collect -N"));
         assert!(hook.contains("--shell-intercept --shell fish --stdin"));
-        assert!(hook.contains("bind enter __gqy_accept_line"));
-        assert!(hook.contains("bind \\r __gqy_accept_line"));
-        assert!(hook.contains("bind ctrl-j __gqy_insert_newline"));
-        assert!(hook.contains("bind -M insert enter __gqy_accept_line"));
-        assert!(hook.contains("bind -M insert ctrl-j __gqy_insert_newline"));
+        assert!(hook.contains("bind enter __hilia_accept_line"));
+        assert!(hook.contains("bind \\r __hilia_accept_line"));
+        assert!(hook.contains("bind ctrl-j __hilia_insert_newline"));
+        assert!(hook.contains("bind -M insert enter __hilia_accept_line"));
+        assert!(hook.contains("bind -M insert ctrl-j __hilia_insert_newline"));
     }
 
     #[test]
     fn fish_hook_resets_image_counter_on_command_not_found() {
         let hook = hook();
-        assert!(hook.contains("set -e __gqy_image_counter"));
+        assert!(hook.contains("set -e __hilia_image_counter"));
     }
 
     #[test]
@@ -390,7 +390,7 @@ mod tests {
             cache_dir: temp.path().join("cache"),
             state_dir: temp.path().join("state"),
             pictures_dir: temp.path().join("pictures"),
-            fish_hook_file: temp.path().join("gqy.fish"),
+            fish_hook_file: temp.path().join("hilia.fish"),
             bash_hook_file: temp.path().join("bash-hook.sh"),
             zsh_hook_file: temp.path().join("zsh-hook.zsh"),
             scripts_dir: temp.path().join("scripts"),

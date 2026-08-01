@@ -80,7 +80,7 @@ fn run_main_menu(
         ];
         draw_menu(
             stdout,
-            t(" GQY 配置 ", " GQY 配置 "),
+            t(" 希尔娅配置 ", " 希尔娅配置 "),
             &options,
             selected,
             "",
@@ -1786,7 +1786,7 @@ fn fetch_models(provider: &ProviderConfig) -> Result<Vec<String>> {
         .build()?
         .get(url)
         .header("Accept", "application/json")
-        .header("User-Agent", "gqy-config");
+        .header("User-Agent", "hilia-config");
     if !api_key.is_empty() {
         request = request.bearer_auth(api_key);
     }

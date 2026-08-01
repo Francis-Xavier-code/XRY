@@ -182,6 +182,28 @@ fn package_manager_guess(
             managers.push("brew");
         }
     }
+    if std::env::consts::OS == "windows" {
+        // Windows 包管理器：按 PATH 探测 winget / choco / scoop
+        if let Some(paths) = std::env::var_os("PATH") {
+            let dirs: Vec<_> = std::env::split_paths(&paths).collect();
+            for (name, exe) in [
+                ("winget", "winget.exe"),
+                ("choco", "choco.exe"),
+                ("scoop", "scoop.exe"),
+            ] {
+                let found = dirs.iter().any(|dir| dir.join(exe).is_file());
+                if found {
+                    managers.push(name);
+                }
+            }
+        }
+        if !managers
+            .iter()
+            .any(|manager| matches!(*manager, "winget" | "choco" | "scoop"))
+        {
+            managers.push("winget");
+        }
+    }
     if managers.is_empty() {
         managers.push("unknown");
     }
@@ -627,6 +649,9 @@ fn ensure_readonly_command(command: &str) -> Result<()> {
         "apt update",
         "dnf install",
         "brew install",
+        "winget install",
+        "choco install",
+        "scoop install",
         "sed -i",
         "git add",
         "git commit",
@@ -1059,7 +1084,7 @@ mod tests {
     #[test]
     fn readonly_command_allows_inspection() {
         assert!(ensure_readonly_command("git status --short").is_ok());
-        assert!(ensure_readonly_command("pacman -Q gqy").is_ok());
+        assert!(ensure_readonly_command("pacman -Q hilia").is_ok());
     }
 
     #[test]

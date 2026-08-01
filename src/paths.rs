@@ -4,13 +4,13 @@ use directories::{BaseDirs, UserDirs};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-pub const GQY_HOME_ENV: &str = "GQY_HOME";
-pub const GQY_SHARE_DIR_ENV: &str = "GQY_SHARE_DIR";
+pub const HILIA_HOME_ENV: &str = "HILIA_HOME";
+pub const HILIA_SHARE_DIR_ENV: &str = "HILIA_SHARE_DIR";
 
 /// 打包进来的只读资源（scripts/memes/kb）统一放在一个 share 基目录下。
 /// 三种入口一致：
-/// - brew CLI：`$(brew --prefix)/share/gqy/{scripts,memes,kb}`
-/// - 菜单栏 App：`顾清影.app/Contents/Resources/share/gqy/{scripts,memes,kb}`
+/// - Windows 安装：`C:\hilia\share\hilia\{scripts,memes,kb}`
+/// - 菜单栏/托盘 App：`<安装目录>/share/hilia/{scripts,memes,kb}`
 /// - 源码构建：仓库内 `src/scripts`、`src/memes`、`kb`（share 基目录 = 仓库根）
 #[derive(Debug, Clone)]
 pub struct GqyPaths {
@@ -28,7 +28,7 @@ pub struct GqyPaths {
     pub system_scripts_dir: PathBuf,
     /// 只读共享资源基目录（内置脚本/表情/知识库源）。
     pub share_dir: PathBuf,
-    /// 随包知识库源目录（`gqy kb add <这里>` 一键导入）。
+    /// 随包知识库源目录（`hilia kb add <这里>` 一键导入）。
     pub kb_dir: PathBuf,
 }
 
@@ -42,20 +42,20 @@ impl GqyPaths {
             "could not determine XDG base directories",
             "无法确定 XDG 基础目录",
         ))?;
-        // 统一使用小写 gqy：升级只替换二进制，目录路径不变即数据不变
-        let config_dir = base.config_dir().join("gqy");
-        let data_dir = base.data_dir().join("gqy");
-        let cache_dir = base.cache_dir().join("gqy");
+        // 统一使用小写 hilia：升级只替换二进制，目录路径不变即数据不变
+        let config_dir = base.config_dir().join("hilia");
+        let data_dir = base.data_dir().join("hilia");
+        let cache_dir = base.cache_dir().join("hilia");
         let state_dir = base
             .state_dir()
             .unwrap_or_else(|| base.data_dir())
-            .join("gqy");
+            .join("hilia");
         let pictures_dir = std::env::var_os("XDG_PICTURES_DIR")
             .map(PathBuf::from)
             .or_else(|| UserDirs::new().and_then(|dirs| dirs.picture_dir().map(PathBuf::from)))
             .unwrap_or_else(|| base.home_dir().join("Pictures"))
-            .join("gqy");
-        let fish_hook_file = base.config_dir().join("fish/conf.d/gqy.fish");
+            .join("hilia");
+        let fish_hook_file = base.config_dir().join("fish/conf.d/hilia.fish");
         let bash_hook_file = config_dir.join("shell/bash-hook.sh");
         let zsh_hook_file = config_dir.join("shell/zsh-hook.zsh");
         let scripts_dir = config_dir.join("scripts");
@@ -92,7 +92,7 @@ impl GqyPaths {
         Self {
             config_file: config_dir.join("config.jsonc"),
             skills_dir: config_dir.join("skills"),
-            fish_hook_file: config_dir.join("shell/gqy.fish"),
+            fish_hook_file: config_dir.join("shell/hilia.fish"),
             bash_hook_file: config_dir.join("shell/bash-hook.sh"),
             zsh_hook_file: config_dir.join("shell/zsh-hook.zsh"),
             scripts_dir: config_dir.join("scripts"),
@@ -126,24 +126,36 @@ impl GqyPaths {
         self.cache_dir.join("logs")
     }
 
-    /// 给子进程/LaunchAgent 用的 GQY_HOME 提示值（统一布局下即数据根）。
+    /// 给子进程/计划任务用的 HILIA_HOME 提示值（统一布局下即数据根）。
     pub fn home_hint(&self) -> String {
         if let Ok(Some(home)) = self.isolated_home() {
             return home.display().to_string();
         }
         directories::BaseDirs::new()
-            .map(|dirs| dirs.data_dir().join("gqy"))
-            .unwrap_or_else(|| PathBuf::from("/Users/Shared/gqy"))
+            .map(|dirs| dirs.data_dir().join("hilia"))
+            .unwrap_or_else(|| {
+                if cfg!(windows) {
+                    PathBuf::from(r"C:\Users\Public\hilia")
+                } else {
+                    PathBuf::from("/Users/Shared/hilia")
+                }
+            })
             .display()
             .to_string()
     }
 
-    /// 给子进程/LaunchAgent 用的 gqy 二进制路径提示。
+    /// 给子进程/计划任务用的 hilia 二进制路径提示。
     pub fn bin_hint(&self) -> String {
         std::env::current_exe()
             .ok()
             .map(|path| path.display().to_string())
-            .unwrap_or_else(|| "/opt/homebrew/bin/gqy".to_string())
+            .unwrap_or_else(|| {
+                if cfg!(windows) {
+                    "hilia.exe".to_string()
+                } else {
+                    "/opt/homebrew/bin/hilia".to_string()
+                }
+            })
     }
 
     pub fn print(&self) {
@@ -229,13 +241,13 @@ impl GqyPaths {
 }
 
 /// 只读共享资源基目录解析顺序：
-/// 1. `GQY_SHARE_DIR` 环境变量（测试/特殊部署）
-/// 2. 从可执行文件所在目录逐级向上找 `<祖先>/share/gqy`（brew cellar、app bundle、prefix）
+/// 1. `HILIA_SHARE_DIR` 环境变量（测试/特殊部署）
+/// 2. 从可执行文件所在目录逐级向上找 `<祖先>/share/hilia`（Windows 安装目录、app bundle、prefix）
 /// 3. 源码树：仓库根（其下为 src/scripts、src/memes、kb）
-/// 4. Linux 兜底 `/usr/share/gqy`
+/// 4. 兜底 `/usr/share/hilia`
 pub fn resolve_share_base() -> PathBuf {
     resolve_share_base_from(
-        std::env::var_os(GQY_SHARE_DIR_ENV).map(PathBuf::from),
+        std::env::var_os(HILIA_SHARE_DIR_ENV).map(PathBuf::from),
         std::env::current_exe().ok().as_deref(),
         &crate::tools::path_guard::project_dir(),
     )
@@ -253,7 +265,7 @@ fn resolve_share_base_from(
         let mut dir = exe.parent();
         for _ in 0..8 {
             let Some(d) = dir else { break };
-            let candidate = d.join("share/gqy");
+            let candidate = d.join("share/hilia");
             if share_base_plausible(&candidate) {
                 return candidate;
             }
@@ -263,7 +275,7 @@ fn resolve_share_base_from(
     if share_base_plausible(project_dir) {
         return project_dir.to_path_buf();
     }
-    PathBuf::from("/usr/share/gqy")
+    PathBuf::from("/usr/share/hilia")
 }
 
 /// share 基目录里是否确实放着资源（避免误判 home 目录等）。
@@ -293,7 +305,7 @@ fn resolve_system_scripts_dir(share_base: &Path) -> PathBuf {
 }
 
 fn isolated_home_from_env() -> Result<Option<PathBuf>> {
-    let Some(raw) = std::env::var_os(GQY_HOME_ENV) else {
+    let Some(raw) = std::env::var_os(HILIA_HOME_ENV) else {
         return Ok(None);
     };
     validate_isolated_home(raw).map(Some)
@@ -302,10 +314,10 @@ fn isolated_home_from_env() -> Result<Option<PathBuf>> {
 fn validate_isolated_home(raw: OsString) -> Result<PathBuf> {
     let home = PathBuf::from(raw);
     if home.as_os_str().is_empty() {
-        anyhow::bail!("{GQY_HOME_ENV} must not be empty");
+        anyhow::bail!("{HILIA_HOME_ENV} must not be empty");
     }
     if !home.is_absolute() {
-        anyhow::bail!("{GQY_HOME_ENV} must be an absolute path");
+        anyhow::bail!("{HILIA_HOME_ENV} must be an absolute path");
     }
     Ok(home)
 }
@@ -316,7 +328,7 @@ mod tests {
 
     #[test]
     fn isolated_layout_stays_under_one_home() {
-        let home = PathBuf::from("/tmp/gqy-test-home");
+        let home = PathBuf::from("/tmp/hilia-test-home");
         let paths = GqyPaths::from_isolated_home(home.clone());
 
         for path in [
@@ -343,9 +355,9 @@ mod tests {
 
     #[test]
     fn share_base_prefers_env_override() {
-        let temp = std::env::temp_dir().join("gqy-share-test-env");
+        let temp = std::env::temp_dir().join("hilia-share-test-env");
         std::fs::create_dir_all(temp.join("scripts")).unwrap();
-        let exe = std::env::temp_dir().join("cellar/gqy/0.4.2/bin/gqy");
+        let exe = std::env::temp_dir().join("prefix/hilia/0.6.0/bin/hilia");
         let found = resolve_share_base_from(
             Some(temp.clone()),
             Some(&exe),
@@ -357,30 +369,30 @@ mod tests {
 
     #[test]
     fn share_base_walks_up_from_brew_cellar_exe() {
-        let temp = std::env::temp_dir().join("gqy-share-test-cellar");
-        std::fs::create_dir_all(temp.join("share/gqy/scripts")).unwrap();
-        std::fs::create_dir_all(temp.join("Cellar/gqy/0.4.2/bin")).unwrap();
-        let exe = temp.join("Cellar/gqy/0.4.2/bin/gqy");
+        let temp = std::env::temp_dir().join("hilia-share-test-cellar");
+        std::fs::create_dir_all(temp.join("share/hilia/scripts")).unwrap();
+        std::fs::create_dir_all(temp.join("prefix/hilia/0.6.0/bin")).unwrap();
+        let exe = temp.join("prefix/hilia/0.6.0/bin/hilia");
         let found = resolve_share_base_from(None, Some(&exe), Path::new("/nonexistent/project"));
-        assert_eq!(found, temp.join("share/gqy"));
+        assert_eq!(found, temp.join("share/hilia"));
         std::fs::remove_dir_all(&temp).ok();
     }
 
     #[test]
     fn share_base_finds_app_bundle_resources() {
-        let temp = std::env::temp_dir().join("gqy-share-test-bundle");
-        std::fs::create_dir_all(temp.join("Resources/share/gqy/memes/gqy/images")).unwrap();
-        let exe = temp.join("Resources/gqy");
+        let temp = std::env::temp_dir().join("hilia-share-test-bundle");
+        std::fs::create_dir_all(temp.join("Resources/share/hilia/memes/hilia/images")).unwrap();
+        let exe = temp.join("Resources/hilia");
         let found = resolve_share_base_from(None, Some(&exe), Path::new("/nonexistent/project"));
-        assert_eq!(found, temp.join("Resources/share/gqy"));
+        assert_eq!(found, temp.join("Resources/share/hilia"));
         std::fs::remove_dir_all(&temp).ok();
     }
 
     #[test]
     fn share_base_falls_back_to_source_tree() {
-        let temp = std::env::temp_dir().join("gqy-share-test-src");
+        let temp = std::env::temp_dir().join("hilia-share-test-src");
         std::fs::create_dir_all(temp.join("src/scripts")).unwrap();
-        let exe = temp.join("target/release/gqy");
+        let exe = temp.join("target/release/hilia");
         let found = resolve_share_base_from(None, Some(&exe), &temp);
         assert_eq!(found, temp);
         std::fs::remove_dir_all(&temp).ok();
@@ -390,19 +402,19 @@ mod tests {
     fn share_base_defaults_to_linux_share() {
         let found = resolve_share_base_from(
             None,
-            Some(Path::new("/opt/bin/gqy")),
+            Some(Path::new("/opt/bin/hilia")),
             Path::new("/nonexistent/project"),
         );
-        assert_eq!(found, PathBuf::from("/usr/share/gqy"));
+        assert_eq!(found, PathBuf::from("/usr/share/hilia"));
     }
 
     #[test]
     fn system_scripts_dir_matches_share_or_source_layout() {
-        let temp = std::env::temp_dir().join("gqy-share-test-layout");
-        std::fs::create_dir_all(temp.join("share/gqy/scripts")).unwrap();
+        let temp = std::env::temp_dir().join("hilia-share-test-layout");
+        std::fs::create_dir_all(temp.join("share/hilia/scripts")).unwrap();
         assert_eq!(
-            resolve_system_scripts_dir(&temp.join("share/gqy")),
-            temp.join("share/gqy/scripts")
+            resolve_system_scripts_dir(&temp.join("share/hilia")),
+            temp.join("share/hilia/scripts")
         );
         std::fs::create_dir_all(temp.join("src/scripts")).unwrap();
         assert_eq!(

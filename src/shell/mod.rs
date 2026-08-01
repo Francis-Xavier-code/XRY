@@ -5,7 +5,6 @@ pub mod zsh;
 use crate::i18n::text as t;
 use std::env;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 pub fn print_reload_hint(shell: &str, hook_file: &Path) {
@@ -34,6 +33,8 @@ pub fn print_reload_hint(shell: &str, hook_file: &Path) {
     }
 }
 
+/// 当前终端是什么 shell（fish/bash/zsh）。仅 Unix 有效；Windows 无对应概念，返回 None。
+#[cfg(unix)]
 pub fn current_parent_shell() -> Option<String> {
     let mut pid = std::process::id();
     for _ in 0..8 {
@@ -47,6 +48,12 @@ pub fn current_parent_shell() -> Option<String> {
     None
 }
 
+#[cfg(not(unix))]
+pub fn current_parent_shell() -> Option<String> {
+    None
+}
+
+#[cfg(unix)]
 fn parent_pid(pid: u32) -> Option<u32> {
     if let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) {
         let after_name = stat.rsplit_once(") ")?.1;
@@ -56,6 +63,7 @@ fn parent_pid(pid: u32) -> Option<u32> {
     ps_field(pid, "ppid")?.parse().ok()
 }
 
+#[cfg(unix)]
 fn process_name(pid: u32) -> Option<String> {
     let name = std::fs::read_to_string(format!("/proc/{pid}/comm"))
         .ok()
@@ -68,6 +76,7 @@ fn process_name(pid: u32) -> Option<String> {
         .map(str::to_string)
 }
 
+#[cfg(unix)]
 fn ps_field(pid: u32, field: &str) -> Option<String> {
     let output = std::process::Command::new("ps")
         .args(["-o", &format!("{field}="), "-p", &pid.to_string()])
@@ -319,23 +328,63 @@ fn is_explicit_command_path(command: &str) -> bool {
         || command.starts_with("./")
         || command.starts_with("../")
         || command.starts_with("~/")
+        || command.starts_with(".\\")
+        || command.starts_with("..\\")
+        || command.starts_with("~\\")
+        || is_windows_drive_path(command)
+}
+
+/// `C:\...` / `D:/...` 这类盘符路径（Windows；Unix 上不可能出现，无害）。
+fn is_windows_drive_path(command: &str) -> bool {
+    let bytes = command.as_bytes();
+    bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && (bytes[2] == b'\\' || bytes[2] == b'/')
 }
 
 fn command_exists_in_path(command: &str) -> bool {
-    if command.is_empty() || command.contains('/') {
+    if command.is_empty() || command.contains('/') || command.contains('\\') {
         return false;
     }
     let Some(paths) = env::var_os("PATH") else {
         return false;
     };
-    env::split_paths(&paths).any(|dir| is_executable_file(&dir.join(command)))
+    env::split_paths(&paths).any(|dir| executable_in_dir(&dir, command))
 }
 
+fn executable_in_dir(dir: &Path, command: &str) -> bool {
+    let base = dir.join(command);
+    if is_executable_file(&base) {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        // Windows 按 PATHEXT 习惯补扩展名（.exe/.cmd/.bat/.ps1）
+        ["exe", "cmd", "bat", "ps1"]
+            .iter()
+            .any(|ext| is_executable_file(&base.with_extension(ext)))
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+/// 文件是否可执行：Unix 看权限位；Windows 上存在即视为可执行候选。
+#[cfg(unix)]
 fn is_executable_file(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
     let Ok(metadata) = fs::metadata(path) else {
         return false;
     };
     metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+}
+
+#[cfg(not(unix))]
+fn is_executable_file(path: &Path) -> bool {
+    fs::metadata(path).map(|metadata| metadata.is_file()).unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -356,7 +405,7 @@ mod tests {
             "这样写可以吗？假设我们输入一个字母`x`"
         ));
         assert!(looks_like_natural_language(
-            "我好像在输入里加一个左斜杠就会导致输入不被传给gqy/对吗？"
+            "我好像在输入里加一个左斜杠就会导致输入不被传给hilia/对吗？"
         ));
         assert!(looks_like_natural_language(
             "软件需要适配 Wayland 的 `text-input` 协议，输入法要支持 $GTK_IM_MODULE 吗？"
@@ -365,7 +414,7 @@ mod tests {
             "GTK_IM_MODULE=fcitx 是什么意思？"
         ));
         assert!(looks_like_natural_language(
-            "./target/release/gqy 查询为什么失败？"
+            "./target/release/hilia 查询为什么失败？"
         ));
     }
 
@@ -382,13 +431,13 @@ mod tests {
         assert!(is_shell_command("cd /tmp", "fish"));
         assert!(is_shell_command("FOO=bar cargo check", "fish"));
         assert!(is_shell_command("# comment\nls", "fish"));
-        assert!(is_shell_command("./target/release/gqy hi", "fish"));
+        assert!(is_shell_command("./target/release/hilia hi", "fish"));
         assert!(is_shell_command("for item in a b", "fish"));
         assert!(is_shell_command("time cargo check", "fish"));
     }
 
     #[test]
-    fn classifies_messages_as_gqy() {
+    fn classifies_messages_as_hilia() {
         assert!(!is_shell_command("你觉得 a;b 是什么意思", "fish"));
         assert!(!is_shell_command("解释 <tag> 是什么", "fish"));
         assert!(!is_shell_command("第一行\n第二行", "fish"));

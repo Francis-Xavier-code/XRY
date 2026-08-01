@@ -240,7 +240,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn test_paths() -> GqyPaths {
-        let root = PathBuf::from("/tmp/gqy-memory-tool-test");
+        let root = PathBuf::from("/tmp/hilia-memory-tool-test");
         GqyPaths {
             config_dir: root.join("config"),
             config_file: root.join("config/config.jsonc"),
