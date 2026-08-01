@@ -1,4 +1,5 @@
 mod conversation_db;
+mod credits_db;
 mod usage;
 
 use crate::llm::Usage;
@@ -16,6 +17,9 @@ use std::sync::Arc;
 pub use conversation_db::{
     interrupted_text, pending_placeholder, ConversationDb, ImageAsset, ImageAssetData,
     QueuedPrompt, QueuedPromptAttachment, Turn, TurnFollowup, TurnStatus,
+};
+pub use credits_db::{
+    ClassRow, CreditRecordRow, CreditSummary, CreditTypeRow, CreditsDb, StudentRow,
 };
 pub use usage::UsageSnapshot;
 

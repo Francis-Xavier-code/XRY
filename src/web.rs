@@ -57,6 +57,8 @@ const APP_JS: &str = include_str!("../web/app.js");
 const MINI_HTML: &str = include_str!("../web/mini.html");
 const MINI_CSS: &str = include_str!("../web/mini.css");
 const MINI_JS: &str = include_str!("../web/mini.js");
+const CREDITS_HTML: &str = include_str!("../web/credits.html");
+const CREDITS_JS: &str = include_str!("../web/credits.js");
 const HILIA_LOGO: &[u8] = include_bytes!("../pics/Hilia-avatar.png");
 const HILIA_WALLPAPER: &[u8] = include_bytes!("../pics/Hilia-image.png");
 const PROVIDER_ICONS: &str = include_str!("../web/assets/provider-icons.svg");
@@ -673,6 +675,10 @@ impl ApiError {
         tracing::error!(error = %error, "WebUI request failed");
         Self::new(StatusCode::INTERNAL_SERVER_ERROR, "internal server error")
     }
+
+    fn bad_request(error: impl std::fmt::Display) -> Self {
+        Self::new(StatusCode::BAD_REQUEST, error.to_string())
+    }
 }
 
 impl IntoResponse for ApiError {
@@ -985,6 +991,26 @@ fn router(state: WebState) -> Router {
         .route("/mini", get(mini_asset))
         .route("/mini.css", get(mini_css_asset))
         .route("/mini.js", get(mini_js_asset))
+        .route("/credits", get(credits_asset))
+        .route("/credits.js", get(credits_js_asset))
+        .route("/api/credits/overview", get(credits_overview))
+        .route("/api/credits/classes", get(credits_classes).post(credits_class_add))
+        .route(
+            "/api/credits/classes/{id}",
+            put(credits_class_update).delete(credits_class_delete),
+        )
+        .route("/api/credits/types", get(credits_types).post(credits_type_add))
+        .route("/api/credits/students", get(credits_students).post(credits_student_add))
+        .route(
+            "/api/credits/students/{id}",
+            put(credits_student_update).delete(credits_student_delete),
+        )
+        .route("/api/credits/records", get(credits_records).post(credits_record_add))
+        .route(
+            "/api/credits/records/{id}",
+            put(credits_record_update).delete(credits_record_delete),
+        )
+        .route("/api/credits/import", post(credits_import))
         .route("/assets/hilia-logo.png", get(logo_asset))
         .route("/assets/hilia-wallpaper.png", get(wallpaper_asset))
         .route("/assets/provider-icons.svg", get(provider_icons_asset))
@@ -3878,4 +3904,307 @@ mod tests {
         let error = validate_content("界".repeat(MAX_CONTENT_CHARS + 1)).unwrap_err();
         assert_eq!(error.status, StatusCode::PAYLOAD_TOO_LARGE);
     }
+}
+
+// ─────────────────────────── 学分管理（面板页面 + API） ───────────────────────────
+// 服务对象：大学辅导员（管理员）。页面 /credits 与面板共用会话认证。
+
+use crate::state::CreditsDb as CreditsDbState;
+
+async fn credits_asset() -> Response {
+    text_asset(CREDITS_HTML, "text/html; charset=utf-8")
+}
+
+async fn credits_js_asset() -> Response {
+    text_asset(CREDITS_JS, "application/javascript; charset=utf-8")
+}
+
+fn credits_db(state: &WebState) -> std::result::Result<CreditsDbState, ApiError> {
+    CreditsDbState::open(&state.paths.data_dir).map_err(ApiError::internal)
+}
+
+fn credits_query<T: Into<String>>(value: Option<T>) -> Option<String> {
+    value.map(Into::into).filter(|v| !v.trim().is_empty())
+}
+
+/// 概览：班级 / 类型 / 统计。
+async fn credits_overview(
+    State(state): State<WebState>,
+    headers: HeaderMap,
+) -> std::result::Result<Json<Value>, ApiError> {
+    require_auth(&headers, &state)?;
+    let db = credits_db(&state)?;
+    let classes = db.list_classes().map_err(ApiError::internal)?;
+    let types = db.list_credit_types().map_err(ApiError::internal)?;
+    let total_classes = classes.len();
+    let total_students = db.query_students(None, "").map_err(ApiError::internal)?.len();
+    let records = db.query_credits(None, None, None, "", "").map_err(ApiError::internal)?;
+    let total_records = records.len();
+    let total_points: f64 = records.iter().map(|r| r.points).sum();
+    Ok(Json(json!({
+        "classes": classes,
+        "types": types,
+        "total_classes": total_classes,
+        "total_students": total_students,
+        "total_records": total_records,
+        "total_points": total_points,
+    })))
+}
+
+async fn credits_classes(
+    State(state): State<WebState>,
+    headers: HeaderMap,
+) -> std::result::Result<Json<Value>, ApiError> {
+    require_auth(&headers, &state)?;
+    let db = credits_db(&state)?;
+    Ok(Json(json!({ "classes": db.list_classes().map_err(ApiError::internal)? })))
+}
+
+async fn credits_class_add(
+    State(state): State<WebState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> std::result::Result<Json<Value>, ApiError> {
+    require_auth(&headers, &state)?;
+    let db = credits_db(&state)?;
+    let id = db
+        .add_class(
+            body.get("name").and_then(Value::as_str).unwrap_or(""),
+            body.get("grade").and_then(Value::as_str).unwrap_or(""),
+            body.get("major").and_then(Value::as_str).unwrap_or(""),
+            body.get("note").and_then(Value::as_str).unwrap_or(""),
+        )
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(json!({ "id": id })))
+}
+
+async fn credits_class_update(
+    State(state): State<WebState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Json(body): Json<Value>,
+) -> std::result::Result<Json<Value>, ApiError> {
+    require_auth(&headers, &state)?;
+    let db = credits_db(&state)?;
+    db.update_class(
+        id,
+        body.get("name").and_then(Value::as_str),
+        body.get("grade").and_then(Value::as_str),
+        body.get("major").and_then(Value::as_str),
+        body.get("note").and_then(Value::as_str),
+    )
+    .map_err(ApiError::bad_request)?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+async fn credits_class_delete(
+    State(state): State<WebState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> std::result::Result<Json<Value>, ApiError> {
+    require_auth(&headers, &state)?;
+    let db = credits_db(&state)?;
+    let affected = db.delete_class(id).map_err(ApiError::internal)?;
+    Ok(Json(json!({ "ok": true, "unlinked": affected })))
+}
+
+async fn credits_types(
+    State(state): State<WebState>,
+    headers: HeaderMap,
+) -> std::result::Result<Json<Value>, ApiError> {
+    require_auth(&headers, &state)?;
+    let db = credits_db(&state)?;
+    Ok(Json(json!({ "types": db.list_credit_types().map_err(ApiError::internal)? })))
+}
+
+async fn credits_type_add(
+    State(state): State<WebState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> std::result::Result<Json<Value>, ApiError> {
+    require_auth(&headers, &state)?;
+    let db = credits_db(&state)?;
+    let id = db
+        .add_credit_type(
+            body.get("name").and_then(Value::as_str).unwrap_or(""),
+            body.get("description").and_then(Value::as_str).unwrap_or(""),
+            body.get("max_points").and_then(Value::as_f64).unwrap_or(0.0),
+        )
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(json!({ "id": id })))
+}
+
+async fn credits_students(
+    State(state): State<WebState>,
+    headers: HeaderMap,
+    Query(query): Query<HashMap<String, String>>,
+) -> std::result::Result<Json<Value>, ApiError> {
+    require_auth(&headers, &state)?;
+    let db = credits_db(&state)?;
+    let class_id = query
+        .get("class_id")
+        .and_then(|v| v.parse::<i64>().ok());
+    let keyword = query.get("keyword").map(String::as_str).unwrap_or("");
+    let students = db.query_students(class_id, keyword).map_err(ApiError::internal)?;
+    // 附带每个学生学分汇总
+    let mut with_totals = Vec::new();
+    for student in &students {
+        let summary = db.summary(Some(student.id), None).map_err(ApiError::internal)?;
+        let mut value = serde_json::to_value(student).map_err(ApiError::internal)?;
+        value["total_points"] = json!(summary.total);
+        with_totals.push(value);
+    }
+    Ok(Json(json!({ "students": with_totals })))
+}
+
+async fn credits_student_add(
+    State(state): State<WebState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> std::result::Result<Json<Value>, ApiError> {
+    require_auth(&headers, &state)?;
+    let db = credits_db(&state)?;
+    let id = db
+        .add_student(
+            body.get("student_no").and_then(Value::as_str).unwrap_or(""),
+            body.get("name").and_then(Value::as_str).unwrap_or(""),
+            body.get("class_id").and_then(Value::as_i64),
+            body.get("gender").and_then(Value::as_str).unwrap_or(""),
+            body.get("phone").and_then(Value::as_str).unwrap_or(""),
+            body.get("qq_id").and_then(Value::as_str).unwrap_or(""),
+            body.get("wecom_id").and_then(Value::as_str).unwrap_or(""),
+            body.get("feishu_id").and_then(Value::as_str).unwrap_or(""),
+            body.get("note").and_then(Value::as_str).unwrap_or(""),
+        )
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(json!({ "id": id })))
+}
+
+async fn credits_student_update(
+    State(state): State<WebState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Json(body): Json<Value>,
+) -> std::result::Result<Json<Value>, ApiError> {
+    require_auth(&headers, &state)?;
+    let db = credits_db(&state)?;
+    db.update_student(
+        id,
+        body.get("student_no").and_then(Value::as_str),
+        body.get("name").and_then(Value::as_str),
+        body.get("class_id").and_then(Value::as_i64).map(Some),
+        body.get("gender").and_then(Value::as_str),
+        body.get("phone").and_then(Value::as_str),
+        body.get("qq_id").and_then(Value::as_str),
+        body.get("wecom_id").and_then(Value::as_str),
+        body.get("feishu_id").and_then(Value::as_str),
+        body.get("note").and_then(Value::as_str),
+    )
+    .map_err(ApiError::bad_request)?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+async fn credits_student_delete(
+    State(state): State<WebState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> std::result::Result<Json<Value>, ApiError> {
+    require_auth(&headers, &state)?;
+    let db = credits_db(&state)?;
+    let deleted_records = db.delete_student(id).map_err(ApiError::internal)?;
+    Ok(Json(json!({ "ok": true, "deleted_records": deleted_records })))
+}
+
+async fn credits_records(
+    State(state): State<WebState>,
+    headers: HeaderMap,
+    Query(query): Query<HashMap<String, String>>,
+) -> std::result::Result<Json<Value>, ApiError> {
+    require_auth(&headers, &state)?;
+    let db = credits_db(&state)?;
+    let student_id = query.get("student_id").and_then(|v| v.parse::<i64>().ok());
+    let class_id = query.get("class_id").and_then(|v| v.parse::<i64>().ok());
+    let type_id = query.get("type_id").and_then(|v| v.parse::<i64>().ok());
+    let semester = query.get("semester").map(String::as_str).unwrap_or("");
+    let keyword = query.get("keyword").map(String::as_str).unwrap_or("");
+    let records = db
+        .query_credits(student_id, class_id, type_id, semester, keyword)
+        .map_err(ApiError::internal)?;
+    Ok(Json(json!({ "records": records })))
+}
+
+async fn credits_record_add(
+    State(state): State<WebState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> std::result::Result<Json<Value>, ApiError> {
+    require_auth(&headers, &state)?;
+    let db = credits_db(&state)?;
+    let id = db
+        .add_credit(
+            body.get("student_id").and_then(Value::as_i64).unwrap_or(0),
+            body.get("type_id").and_then(Value::as_i64),
+            body.get("points").and_then(Value::as_f64).unwrap_or(0.0),
+            body.get("semester").and_then(Value::as_str).unwrap_or(""),
+            body.get("happened_on").and_then(Value::as_str).unwrap_or(""),
+            body.get("note").and_then(Value::as_str).unwrap_or(""),
+            "面板",
+        )
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(json!({ "id": id })))
+}
+
+async fn credits_record_update(
+    State(state): State<WebState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Json(body): Json<Value>,
+) -> std::result::Result<Json<Value>, ApiError> {
+    require_auth(&headers, &state)?;
+    let db = credits_db(&state)?;
+    let type_id = body
+        .get("type_id")
+        .and_then(Value::as_i64)
+        .map(Some);
+    db.update_credit(
+        id,
+        body.get("points").and_then(Value::as_f64).filter(|p| *p != 0.0),
+        type_id,
+        body.get("semester").and_then(Value::as_str),
+        body.get("happened_on").and_then(Value::as_str),
+        body.get("note").and_then(Value::as_str),
+    )
+    .map_err(ApiError::bad_request)?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+async fn credits_record_delete(
+    State(state): State<WebState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> std::result::Result<Json<Value>, ApiError> {
+    require_auth(&headers, &state)?;
+    let db = credits_db(&state)?;
+    db.delete_credit(id).map_err(ApiError::internal)?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+async fn credits_import(
+    State(state): State<WebState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> std::result::Result<Json<Value>, ApiError> {
+    require_auth(&headers, &state)?;
+    let db = credits_db(&state)?;
+    let csv = body.get("csv").and_then(Value::as_str).unwrap_or("");
+    let (imported, skipped) = db.import_students_csv(csv).map_err(ApiError::bad_request)?;
+    Ok(Json(json!({
+        "ok": true,
+        "imported": imported,
+        "skipped": skipped,
+        "message": format!(
+            "导入完成：成功 {imported} 人{}",
+            if skipped.is_empty() { String::new() } else { format!("，跳过 {} 条（详见跳过列表）", skipped.len()) }
+        ),
+    })))
 }

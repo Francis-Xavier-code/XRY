@@ -3,6 +3,7 @@ mod apply_patch;
 mod ask_question;
 mod calculator;
 mod clipboard;
+mod credits;
 mod deep_research;
 mod deepseek_status;
 mod default_tools;
@@ -263,6 +264,7 @@ pub fn builtin_registry(config: &AppConfig, paths: &GqyPaths) -> ToolRegistry {
     // 本地视觉（Apple Vision）不依赖插件开关：模型超额时兜底看图
     local_vision::register(&mut registry, paths.clone());
     speech::register(&mut registry, paths.clone());
+    credits::register(&mut registry, paths.clone());
     if config.plugins.image_generation.enabled {
         image_generation::register(&mut registry, config.clone());
     }
