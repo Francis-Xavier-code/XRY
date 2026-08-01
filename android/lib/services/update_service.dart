@@ -74,7 +74,7 @@ class UpdateService {
       final keyBytes = base64Decode(AppConfig.builtinPublicKeyB64());
       final sigBytes = base64Decode(signatureB64);
       final ed25519 = Ed25519();
-      final publicKey = await ed25519.newPublicKeyFromBytes(keyBytes);
+      final publicKey = SimplePublicKey(keyBytes, type: KeyPairType.ed25519);
       final signature = Signature(sigBytes, publicKey: publicKey);
       return await ed25519.verify(message, signature: signature);
     } catch (_) {

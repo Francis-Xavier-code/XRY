@@ -105,7 +105,7 @@ class _ScanPageState extends State<ScanPage> {
                 borderRadius: BorderRadius.circular(16),
                 child: MobileScanner(
                   onDetect: _onDetect,
-                  errorBuilder: (context, error) => Center(
+                  errorBuilder: (context, error, child) => Center(
                     child: Text('相机不可用：$error',
                         style: const TextStyle(color: Colors.redAccent)),
                   ),

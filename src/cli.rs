@@ -1421,19 +1421,33 @@ pub async fn run(cli: Cli, paths: GqyPaths) -> Result<()> {
         return run_shell_intercept(&paths, shell_name, message).await;
     }
 
-    if !paths.config_file.exists()
-        && !matches!(
-            cli.command,
-            Some(Command::Init)
-                | Some(Command::FishInit)
-                | Some(Command::BashInit)
-                | Some(Command::ZshInit)
-                | Some(Command::RemoveShellHook)
-                | Some(Command::Paths)
-                | Some(Command::Backup(_))
-                | Some(Command::Preview)
-        )
-    {
+    let first_run_exempt = {
+        #[cfg(unix)]
+        {
+            matches!(
+                cli.command,
+                Some(Command::Init)
+                    | Some(Command::FishInit)
+                    | Some(Command::BashInit)
+                    | Some(Command::ZshInit)
+                    | Some(Command::RemoveShellHook)
+                    | Some(Command::Paths)
+                    | Some(Command::Backup(_))
+                    | Some(Command::Preview)
+            )
+        }
+        #[cfg(not(unix))]
+        {
+            matches!(
+                cli.command,
+                Some(Command::Init)
+                    | Some(Command::Paths)
+                    | Some(Command::Backup(_))
+                    | Some(Command::Preview)
+            )
+        }
+    };
+    if !paths.config_file.exists() && !first_run_exempt {
         run_init(&paths, InitKind::FirstRun)?;
     }
 
@@ -3128,7 +3142,11 @@ fn run_clipboard_paste(paths: &GqyPaths) -> Result<()> {
                 if link_path.exists() || link_path.is_symlink() {
                     std::fs::remove_file(&link_path)?;
                 }
+                // 剪贴板图片展示链接：Unix 用符号链接，Windows 复制一份
+                #[cfg(unix)]
                 std::os::unix::fs::symlink(&path, &link_path)?;
+                #[cfg(windows)]
+                std::fs::copy(&path, &link_path)?;
             }
             print!("[Image 1: {}]", filename);
             io::stdout().flush()?;
