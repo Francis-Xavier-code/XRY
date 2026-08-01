@@ -10,6 +10,7 @@
 
 pub mod feishu;
 pub mod napcat;
+pub mod relay;
 pub mod wecom;
 
 use crate::paths::GqyPaths;
@@ -30,6 +31,8 @@ pub struct BridgesConfig {
     pub wecom: Option<WecomConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub feishu: Option<FeishuConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relay: Option<RelayConfig>,
     /// 各平台管理员（辅导员）ID 列表：{ "qq": ["123456"], "wecom": ["userid"], "feishu": ["open_id"] }
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub admins: HashMap<String, Vec<String>>,
@@ -63,6 +66,26 @@ pub struct WecomConfig {
     pub encoding_aes_key: String,
     #[serde(default)]
     pub callback_port: u16,
+    #[serde(default)]
+    pub bin: String,
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RelayConfig {
+    /// 中继服务器地址，如 wss://relay.example.com/ws
+    #[serde(default)]
+    pub relay_url: String,
+    /// 桌面端设备 token（首次 install 时向中继注册获取）
+    #[serde(default)]
+    pub token: String,
+    /// 桌面端设备 ID（中继分配）
+    #[serde(default)]
+    pub device_id: String,
+    /// 面板访问密码（可选，配置了面板密码时用于本地配对确认调用）
+    #[serde(default)]
+    pub panel_password: String,
     #[serde(default)]
     pub bin: String,
     #[serde(default = "default_enabled")]

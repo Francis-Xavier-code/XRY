@@ -62,6 +62,7 @@ const CREDITS_JS: &str = include_str!("../web/credits.js");
 const HILIA_LOGO: &[u8] = include_bytes!("../pics/Hilia-avatar.png");
 const HILIA_WALLPAPER: &[u8] = include_bytes!("../pics/Hilia-image.png");
 const PROVIDER_ICONS: &str = include_str!("../web/assets/provider-icons.svg");
+const QRCODE_JS: &str = include_str!("../web/assets/qrcode.min.js");
 
 #[derive(Clone)]
 struct WebState {
@@ -1012,9 +1013,13 @@ fn router(state: WebState) -> Router {
         )
         .route("/api/credits/import", post(credits_import))
         .route("/api/update/check", get(update_check_api))
+        .route("/api/pairing/create", post(pairing_create))
+        .route("/api/pairing/request", post(pairing_request))
+        .route("/api/pairing/confirm", post(pairing_confirm))
         .route("/assets/hilia-logo.png", get(logo_asset))
         .route("/assets/hilia-wallpaper.png", get(wallpaper_asset))
         .route("/assets/provider-icons.svg", get(provider_icons_asset))
+        .route("/assets/qrcode.min.js", get(qrcode_js_asset))
         .route("/api/health", get(health))
         .route("/api/auth/login", post(auth_login))
         .route("/api/bootstrap", get(bootstrap))
@@ -1069,6 +1074,10 @@ async fn wallpaper_asset() -> Response {
 
 async fn provider_icons_asset() -> Response {
     text_asset(PROVIDER_ICONS, "image/svg+xml; charset=utf-8")
+}
+
+async fn qrcode_js_asset() -> Response {
+    text_asset(QRCODE_JS, "application/javascript; charset=utf-8")
 }
 
 fn text_asset(content: &'static str, content_type: &'static str) -> Response {
@@ -4236,4 +4245,135 @@ async fn update_check_api(
         "notes": result.notes,
         "upstream": config.update.upstream_url,
     })))
+}
+
+// ─────────────────────────── 设备配对 API（APK 扫码） ───────────────────────────
+
+/// 中继 REST 基地址（wss://host/ws → https://host）。
+fn relay_http_base(relay_url: &str) -> std::result::Result<String, ApiError> {
+    let url = relay_url.trim();
+    if url.is_empty() {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "relay_url 未配置：先 `hilia relay config relay_url wss://你的中继/ws`",
+        ));
+    }
+    let rest = url
+        .strip_prefix("wss://")
+        .or_else(|| url.strip_prefix("ws://"))
+        .ok_or_else(|| ApiError::new(StatusCode::BAD_REQUEST, "relay_url 必须以 wss:// 或 ws:// 开头"))?;
+    let scheme = if url.starts_with("wss://") { "https" } else { "http" };
+    Ok(format!("{scheme}://{}", rest.trim_end_matches('/').trim_end_matches("/ws")))
+}
+
+/// 生成配对二维码数据：调中继注册桌面配对码。
+async fn pairing_create(
+    State(state): State<WebState>,
+    headers: HeaderMap,
+) -> std::result::Result<Json<Value>, ApiError> {
+    require_auth(&headers, &state)?;
+    let bridges = crate::bridges::load(&state.paths).map_err(ApiError::internal)?;
+    let relay = bridges
+        .relay
+        .as_ref()
+        .ok_or_else(|| ApiError::new(StatusCode::BAD_REQUEST, "中继未配置：先 `hilia relay install`"))?;
+    let base = relay_http_base(&relay.relay_url)?;
+    let relay_url = relay.relay_url.clone();
+    let body: Value = tokio::task::spawn_blocking(move || -> std::result::Result<Value, String> {
+        let client = reqwest::blocking::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(20))
+            .build()
+            .map_err(|error| error.to_string())?;
+        let hostname = std::env::var("COMPUTERNAME").unwrap_or_else(|_| "Windows 桌面".to_string());
+        let response = client
+            .post(format!("{base}/pairing/register"))
+            .json(&json!({ "label": hostname }))
+            .send()
+            .map_err(|error| format!("中继连接失败：{error}"))?;
+        if !response.status().is_success() {
+            return Err(format!("中继注册失败：HTTP {}", response.status()));
+        }
+        response.json().map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(ApiError::internal)?
+    .map_err(|message| ApiError::new(StatusCode::BAD_GATEWAY, message))?;
+    let code = body.get("code").and_then(Value::as_str).unwrap_or_default().to_string();
+    let expires_in = body.get("expires_in").and_then(Value::as_i64).unwrap_or(300);
+    if code.is_empty() {
+        return Err(ApiError::internal("中继返回缺少 code"));
+    }
+    Ok(Json(json!({
+        "ok": true,
+        "code": code,
+        "relay_url": relay_url,
+        "expires_in": expires_in,
+        // 二维码内容（APK 扫码解析）
+        "qr": format!("hilia://pair?relay={relay_url}&code={code}"),
+    })))
+}
+
+/// 配对请求通知（由 relay bridge 本地调用）：SSE 推给面板弹确认。
+async fn pairing_request(
+    State(state): State<WebState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> std::result::Result<Json<Value>, ApiError> {
+    require_auth(&headers, &state)?;
+    let code = body.get("code").and_then(Value::as_str).unwrap_or_default().to_string();
+    if code.is_empty() {
+        return Err(ApiError::bad_request("code required"));
+    }
+    let apk_label = body.get("apk_label").and_then(Value::as_str).unwrap_or("Android");
+    let apk_device_id = body.get("apk_device_id").and_then(Value::as_str).unwrap_or("");
+    state.events.publish(
+        "pairing.request",
+        json!({
+            "code": code,
+            "apk_label": apk_label,
+            "apk_device_id": apk_device_id,
+        }),
+    );
+    Ok(Json(json!({ "ok": true })))
+}
+
+/// 辅导员确认/拒绝配对：调中继 confirm。
+async fn pairing_confirm(
+    State(state): State<WebState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> std::result::Result<Json<Value>, ApiError> {
+    require_auth(&headers, &state)?;
+    let code = body.get("code").and_then(Value::as_str).unwrap_or_default().to_string();
+    if code.is_empty() {
+        return Err(ApiError::bad_request("code required"));
+    }
+    let accept = body.get("accept").and_then(Value::as_bool).unwrap_or(false);
+    let bridges = crate::bridges::load(&state.paths).map_err(ApiError::internal)?;
+    let relay = bridges
+        .relay
+        .as_ref()
+        .ok_or_else(|| ApiError::new(StatusCode::BAD_REQUEST, "中继未配置"))?;
+    let base = relay_http_base(&relay.relay_url)?;
+    let ok = tokio::task::spawn_blocking(move || -> std::result::Result<bool, String> {
+        let client = reqwest::blocking::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(20))
+            .build()
+            .map_err(|error| error.to_string())?;
+        let response = client
+            .post(format!("{base}/pairing/confirm"))
+            .json(&json!({ "code": code, "accept": accept }))
+            .send()
+            .map_err(|error| format!("中继连接失败：{error}"))?;
+        if !response.status().is_success() {
+            return Err(format!("中继确认失败：HTTP {}", response.status()));
+        }
+        Ok(true)
+    })
+    .await
+    .map_err(ApiError::internal)?
+    .map_err(|message| ApiError::new(StatusCode::BAD_GATEWAY, message))?;
+    Ok(Json(json!({ "ok": ok, "accepted": accept })))
 }

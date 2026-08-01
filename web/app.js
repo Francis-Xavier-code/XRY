@@ -94,6 +94,10 @@
     updateUpstream: document.getElementById("updateUpstream"),
     checkUpdateButton: document.getElementById("checkUpdateButton"),
     updateResult: document.getElementById("updateResult"),
+    pairingCreateButton: document.getElementById("pairingCreateButton"),
+    pairingQr: document.getElementById("pairingQr"),
+    pairingQrCode: document.getElementById("pairingQrCode"),
+    pairingCodeLine: document.getElementById("pairingCodeLine"),
     currentConversation: document.getElementById("currentConversation"),
     sidebarConversationTitle: document.getElementById("sidebarConversationTitle"),
     sidebarConversationSnippet: document.getElementById("sidebarConversationSnippet"),
@@ -4161,6 +4165,24 @@
     }
     if (name === "conversation.reset") {
       loadBootstrap();
+      return;
+    }
+    if (name === "pairing.request") {
+      const code = data?.code || "";
+      const label = data?.apk_label || "Android 设备";
+      if (confirm(`设备配对请求\n\n${label} 正在申请与这台电脑配对（配对码 ${code}）。\n\n允许配对吗？`)) {
+        fetch("/api/pairing/confirm", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code, accept: true }),
+        }).catch(() => {});
+      } else {
+        fetch("/api/pairing/confirm", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code, accept: false }),
+        }).catch(() => {});
+      }
       return;
     }
     if (name === "update.available") {

@@ -4,6 +4,7 @@ use crate::agent::{
 use crate::backup::{BackupInitOptions, BackupOutcome, RestoreOptions};
 use crate::bridges::feishu::FeishuArgs;
 use crate::bridges::napcat::NapcatArgs;
+use crate::bridges::relay::RelayArgs;
 use crate::bridges::wecom::WecomArgs;
 use crate::config::{ActiveProviderModelConfig, AppConfig};
 use crate::i18n::{is_zh, text as t};
@@ -859,6 +860,7 @@ pub enum Command {
     Napcat(NapcatArgs),
     Wecom(WecomArgs),
     Feishu(FeishuArgs),
+    Relay(RelayArgs),
     /// 密钥与签名工具（开发者）
     #[command(hide = true)]
     Keys(KeysArgs),
@@ -1493,6 +1495,7 @@ pub async fn run(cli: Cli, paths: GqyPaths) -> Result<()> {
         Some(Command::Napcat(args)) => crate::bridges::napcat::run(&paths, args).await,
         Some(Command::Wecom(args)) => crate::bridges::wecom::run(&paths, args).await,
         Some(Command::Feishu(args)) => crate::bridges::feishu::run(&paths, args).await,
+        Some(Command::Relay(args)) => crate::bridges::relay::run(&paths, args).await,
         Some(Command::Keys(args)) => run_keys(args),
         Some(Command::License(args)) => run_license(&paths, args),
         Some(Command::Update(args)) => run_update(&paths, args).await,

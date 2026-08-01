@@ -246,6 +246,15 @@
             <button class="secondary-button compact-button" id="checkUpdateButton" type="button">检查更新</button>
             <span class="settings-description" id="updateResult" style="margin-left:10px"></span>
           </div>
+          <div class="settings-update-block" style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border,rgba(255,255,255,0.08))">
+            <h3 style="font-size:14px;margin:0 0 8px">设备配对（APK 扫码）</h3>
+            <p class="settings-description" style="margin:0 0 10px">生成二维码让学生用希尔娅 App 扫码配对；配对请求会在此处弹出确认。</p>
+            <button class="secondary-button compact-button" id="pairingCreateButton" type="button">生成配对二维码</button>
+            <div id="pairingQr" style="margin-top:12px;display:none;text-align:center">
+              <div id="pairingQrCode" style="display:inline-block;background:#fff;padding:8px;border-radius:8px"></div>
+              <p class="settings-description" id="pairingCodeLine" style="margin-top:8px"></p>
+            </div>
+          </div>
           </section>
           <section class="settings-section settings-panel" data-settings-panel="tasks" hidden>
           <h2>定时任务</h2>
