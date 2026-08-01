@@ -1,0 +1,91 @@
+name: build-windows
+
+# 希尔娅 Windows 版远程编译工作流
+# - push / tag / 手动触发 → windows-latest 构建 hilia + hilia-tray
+# - 打包 zip（exe + scripts + kb + memes + communication）
+# - tag（v*）推送自动发布 GitHub Release
+
+on:
+  push:
+    branches: [main, "GQY-windows"]
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 缓存 Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            windows/tray
+
+      - name: 构建核心 hilia.exe
+        run: cargo build --release --locked
+
+      - name: 构建托盘 hilia-tray.exe
+        working-directory: windows/tray
+        run: cargo build --release
+
+      - name: 编译并运行核心单元测试（学分模块）
+        run: |
+          cargo test --release --bin hilia --no-run
+          cargo test --release --bin hilia -- credits::
+
+      - name: 校验桥接脚本语法
+        run: |
+          node --check communication/lib/bridge-common.cjs
+          node --check communication/napcat/bridge.cjs
+          node --check communication/wecom/bridge.cjs
+          node --check communication/feishu/bridge.cjs
+
+      - name: 打包发行目录
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          $stage = "Hilia-$version-windows"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item target/release/hilia.exe $stage/
+          Copy-Item windows/tray/target/release/hilia-tray.exe $stage/
+          Copy-Item src/scripts $stage/scripts -Recurse
+          Copy-Item kb $stage/kb -Recurse
+          Copy-Item src/memes $stage/memes -Recurse
+          Copy-Item communication $stage/communication -Recurse
+          Remove-Item $stage/communication/feishu/node_modules -Recurse -Force -ErrorAction SilentlyContinue
+          Copy-Item windows/install.ps1 $stage/install.ps1
+          Compress-Archive -Path $stage -DestinationPath "$stage.zip"
+          echo "stage_dir=$stage" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: Hilia-windows
+          path: |
+            ${{ env.stage_dir }}.zip
+            ${{ env.stage_dir }}/hilia.exe
+            ${{ env.stage_dir }}/hilia-tray.exe
+          if-no-files-found: error
+
+      - name: 发布 GitHub Release（tag 触发）
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ env.stage_dir }}.zip
+          body: |
+            希尔娅 v${{ github.ref_name }}（Windows x86_64）
+
+            - 解压 `install.ps1` 同目录运行即可安装（安装到 `C:\hilia`）
+            - 或手动解压后运行 `hilia.exe` / `hilia-tray.exe`
+            - 开发者：2101497063@qq.com

@@ -9,7 +9,7 @@
 //! 所有读写走本模块，不做手改文件；CSV 导入格式固定为「学号,姓名,班级,性别,电话」。
 
 use anyhow::{bail, Context, Result};
-use rusqlite::{params, Connection, OptionalExtension, Transaction};
+use rusqlite::{params, Connection, OptionalExtension};
 use std::path::PathBuf;
 use std::sync::Mutex;
 

@@ -1,6 +1,6 @@
 /target/
 /.toolchain/
-/macos/GQYMenuBar/.build/
+/windows/tray/target/
 /.idea/
 /.vscode/
 .DS_Store
@@ -16,6 +16,6 @@
 # ZCode session artifacts
 /.zcode/
 
-# NapCat QQ 机器人（放 ~/napcat，不放进项目）
+# NapCat QQ 机器人（放用户目录，不放进项目）
 /napcat/
 /qq-napcat/

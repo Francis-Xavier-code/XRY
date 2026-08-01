@@ -1,4 +1,4 @@
-# GQY `task` 工具设计方案
+# 希尔娅 `task` 工具设计方案
 
 ## 总览
 
@@ -76,7 +76,7 @@ draw_fortune_lot,, roll_dice
 
 ### 1.3 不需要的类型
 
-- **plan**：GQY 已有 `AgentMode::Plan`，不需要在 task 里重复。
+- **plan**：希尔娅 已有 `AgentMode::Plan`，不需要在 task 里重复。
 - **专门的 code 子代理**：`general` 已覆盖代码编辑场景。
 - **专门的 web 子代理**：`explore` 已包含 `web_fetch` / `web_search`，且 `deep_research` 已有专门的网络研究子代理。
 
@@ -186,13 +186,13 @@ fn default_task_max_steps_general() -> usize { 50 }
 }
 ```
 
-**不实现 `task_id`**：GQY 没有持久化 session 系统，子代理是一次性的。如果未来需要恢复，可以再扩展。
+**不实现 `task_id`**：希尔娅没有持久化 session 系统，子代理是一次性的。如果未来需要恢复，可以再扩展。
 
 ---
 
 ## 5. 返回值格式
 
-采用 JSON 格式（与 GQY 其他工具一致，如 `deep_research`、`linux_game_compatibility`）：
+采用 JSON 格式（与希尔娅其他工具一致，如 `deep_research`、`linux_game_compatibility`）：
 
 ```json
 {
@@ -219,7 +219,7 @@ fn default_task_max_steps_general() -> usize { 50 }
 - `error`：子代理运行出错
 
 **不使用 XML 格式的原因**：
-1. GQY 所有其他工具返回 JSON（`deep_research`、`deep_diagnose`、`linux_game` 都是 `serde_json::to_string_pretty(&json!({...}))`）
+1. 希尔娅所有其他工具返回 JSON（`deep_research`、`deep_diagnose`、`linux_game` 都是 `serde_json::to_string_pretty(&json!({...}))`）
 2. 主 agent 的 `extract_persistable_tool_report` 已经按 JSON 字段提取 `final_answer` / `final_report`
 3. JSON 结构化字段（`stats`、`state`）比 XML 更容易让 LLM 理解和消费
 

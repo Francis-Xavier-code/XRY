@@ -3,6 +3,37 @@
 本项目所有值得记录的改动都会列在此文件。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [0.6.0] - 2026-08-02
+
+### 重大重构：Windows 版「希尔娅」
+- 项目全面改名：gqy → hilia，GQY_HOME → HILIA_HOME，二进制 hilia.exe；
+  人格重写为 Windows 助理**希尔娅**（主业=班级学分管理，服务大学辅导员与学生）
+- 移除全部 macOS 依赖：菜单栏 App / LaunchAgent / Homebrew 打包 / zsh 钩子 / Swift 脚本
+  （shell 钩子与 LaunchAgent 保留 unix 分支仅供开发）；删除 Casks、Formula、macos/ 目录
+- 取消更新：无自更新机制；README 与人格中的升级流程全部移除
+
+### 新增
+- **学分管理**（主业）：credit.db（班级/学生/学分类型/学分记录）+ 16 个对话工具
+  （增删改查/汇总/CSV 导入）+ 面板「学分管理」页（/credits）+ /api/credits/* 接口
+- 角色权限：辅导员=管理员（本机/面板/平台 admins 映射），学生只能查自己的学分，
+  学生自助绑定（「绑定 学号 姓名」）
+- 通信重构：删 Telegram；NapCat 桥接 Windows 化（schtasks 计划任务）；
+  新增企业微信桥接（自建应用回调，需内网穿透）；新增飞书桥接（官方 SDK 长连接，无需公网）
+- Windows 系统托盘应用 windows/tray（面板/迷你/配置/备份/主目录/开机自启/开发者信息，
+  Alt+G 迷你 / Alt+H 面板）
+- 面板/迷你窗口/终端横幅展示开发者 2101497063@qq.com
+
+### 平台适配
+- TTS/STT：Windows 走 PowerShell + System.Speech；本地视觉 OCR 走 WinRT（vision-ocr.ps1）
+- watch 采样、包管理器检测（winget/choco/scoop）、battery-care/procusage/showenv PowerShell 版
+- Windows 路径：%LOCALAPPDATA%\hilia、C:\hilia 安装目录、计划任务自启动
+- 知识库重写为 Windows 内容 + 学分系统手册（辅导员/学生）
+
+### 构建
+- 编译交给远程 GitHub Actions（.github/workflows/build-windows.yml）：
+  push 构建产物 zip，v* 标签自动发布 GitHub Release
+- install.ps1 一键安装（C:\hilia + 开始菜单快捷方式）
+
 ## [Unreleased]
 
 ### 新增

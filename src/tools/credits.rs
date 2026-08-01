@@ -166,7 +166,7 @@ async fn credit_add(args: Value, paths: GqyPaths) -> Result<String> {
         Ok(v) => v,
         Err(err) => return Ok(fail(&err.to_string())),
     };
-    let operator = current_operator(&paths);
+    let operator = current_operator();
     match db.add_credit(
         student.id,
         type_id,
@@ -201,7 +201,7 @@ fn summary_total_for(summary: &crate::state::CreditSummary, type_name: &str) -> 
         .unwrap_or(0.0)
 }
 
-fn current_operator(paths: &GqyPaths) -> String {
+fn current_operator() -> String {
     if crate::bridges::is_bridged() {
         let identity = crate::bridges::current_identity();
         format!("{}:{}", identity.platform, identity.user_id)

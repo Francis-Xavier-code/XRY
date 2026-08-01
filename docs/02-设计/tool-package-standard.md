@@ -1,11 +1,11 @@
-# GQY 工具包标准（Tool Package Standard）
+# 希尔娅 工具包标准（Tool Package Standard）
 
 > 目标：让「发个仓库给顾清影，她能 100% 兼容地转换成自己的工具，长期使用」这件事有章可循。
 
 ## 一、工具包是什么
 
 一个**工具包**是一个目录或 Git 仓库，里面放若干可执行脚本/程序，以及（可选的）清单文件。
-用一条命令导入后，里面的每个脚本都会变成 GQY 可调用的**脚本工具**，随对话长期可用、
+用一条命令导入后，里面的每个脚本都会变成 希尔娅 可调用的**脚本工具**，随对话长期可用、
 随备份快照、换机恢复后依然在：
 
 ```zsh
@@ -18,7 +18,7 @@ gqy tools list                        # 查看已导入的工具包
 
 ### 形态 A：带清单（推荐，100% 兼容）
 
-仓库根放 `gqy-tools.json`（`manifest.json` / `index.json` 也认），格式与 GQY 脚本工具一致：
+仓库根放 `gqy-tools.json`（`manifest.json` / `index.json` 也认），格式与 希尔娅 脚本工具一致：
 
 ```json
 {
@@ -58,7 +58,7 @@ gqy tools list                        # 查看已导入的工具包
 
 ### 形态 B：自动扫描（零配置兜底）
 
-没有清单时，GQY 自动扫描仓库内**有执行权限的文件**（跳过 `.git`、`.` 开头文件），
+没有清单时，希尔娅 自动扫描仓库内**有执行权限的文件**（跳过 `.git`、`.` 开头文件），
 描述取脚本头部的 `Description:` 注释（`# Description: xxx` / `; Description:` 均可）。
 
 ## 二点五、先理解再导入（推荐流程）
@@ -79,9 +79,9 @@ gqy tools import https://github.com/xxx/tool-repo --only download.sh,install.sh
 
 ## 三、导入后的行为
 
-- 文件复制到 `GQY_HOME/config/scripts/<包名>/`，权限 755；
+- 文件复制到 `希尔娅_HOME/config/scripts/<包名>/`，权限 755；
 - 生成 `index.json` 清单，**每轮对话自动扫描注册**，立刻可用；
-- 工具按 `load_policy` 懒加载：模型需要时用 `load_tools` 加载，或对话里让 GQY 加载；
+- 工具按 `load_policy` 懒加载：模型需要时用 `load_tools` 加载，或对话里让 希尔娅 加载；
 - 长期有效：随备份快照；`gqy backup restore` 换机恢复后重新 `gqy tools import <仓库>` 即可（推荐用 Git 仓库形态，天然可更新：再导入一次自动 `git pull`）。
 
 ## 四、给工具作者的要求
@@ -91,10 +91,10 @@ gqy tools import https://github.com/xxx/tool-repo --only download.sh,install.sh
    也接受位置参数；输出打印到 stdout 即工具结果；
 3. **描述要写清**：`description` 决定模型会不会用、用得对不对；
 4. **不依赖网络/密钥**：工具应自包含；需要凭据时通过环境变量注入，不要写死在脚本里；
-5. **安全**：GQY 会做路径越界校验；工具自身的操作风险由描述与使用场景承担
+5. **安全**：希尔娅 会做路径越界校验；工具自身的操作风险由描述与使用场景承担
    （写文件类工具请在自己的描述里声明）。
 
-## 五、让 GQY 自己导入
+## 五、让 希尔娅 自己导入
 
 对话里说「把我这个仓库转成你的工具」并把路径/URL 给她即可——她会执行
 `gqy tools import <url>` 完成导入（她能跑命令）。导入后让她 `gqy tools list`

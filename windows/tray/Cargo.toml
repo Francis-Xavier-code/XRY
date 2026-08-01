@@ -1,0 +1,17 @@
+[package]
+name = "hilia-tray"
+version = "0.6.0"
+edition = "2021"
+description = "希尔娅 Windows 系统托盘应用（启动面板服务 + 快捷入口）"
+license = "GPL-3.0"
+
+[dependencies]
+tray-icon = "0.19"
+winit = "0.30"
+global-hotkey = "0.6"
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+    "Win32_System_Registry",
+    "Win32_UI_WindowsAndMessaging",
+] }
