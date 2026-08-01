@@ -1011,6 +1011,7 @@ fn router(state: WebState) -> Router {
             put(credits_record_update).delete(credits_record_delete),
         )
         .route("/api/credits/import", post(credits_import))
+        .route("/api/update/check", get(update_check_api))
         .route("/assets/hilia-logo.png", get(logo_asset))
         .route("/assets/hilia-wallpaper.png", get(wallpaper_asset))
         .route("/assets/provider-icons.svg", get(provider_icons_asset))
@@ -4206,5 +4207,33 @@ async fn credits_import(
             "导入完成：成功 {imported} 人{}",
             if skipped.is_empty() { String::new() } else { format!("，跳过 {} 条（详见跳过列表）", skipped.len()) }
         ),
+    })))
+}
+
+// ─────────────────────────── 更新检查 API ───────────────────────────
+
+/// 检查更新（面板"版本与更新"区调用）。
+async fn update_check_api(
+    State(state): State<WebState>,
+    headers: HeaderMap,
+) -> std::result::Result<Json<Value>, ApiError> {
+    require_auth(&headers, &state)?;
+    let config = AppConfig::load_or_default(&state.paths).map_err(ApiError::internal)?;
+    let paths = state.paths.clone();
+    let check_config = config.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        crate::update::check_update(&check_config, &paths)
+    })
+    .await
+    .map_err(ApiError::internal)?
+    .map_err(ApiError::internal)?;
+    Ok(Json(json!({
+        "ok": true,
+        "current": result.current_version,
+        "latest": result.latest_version,
+        "has_update": result.has_update,
+        "forced": result.forced,
+        "notes": result.notes,
+        "upstream": config.update.upstream_url,
     })))
 }

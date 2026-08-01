@@ -90,6 +90,10 @@
     sidebarStatusDot: document.getElementById("sidebarStatusDot"),
     sidebarConnectionStatus: document.getElementById("sidebarConnectionStatus"),
     newChatButton: document.getElementById("newChatButton"),
+    updateCurrentVersion: document.getElementById("updateCurrentVersion"),
+    updateUpstream: document.getElementById("updateUpstream"),
+    checkUpdateButton: document.getElementById("checkUpdateButton"),
+    updateResult: document.getElementById("updateResult"),
     currentConversation: document.getElementById("currentConversation"),
     sidebarConversationTitle: document.getElementById("sidebarConversationTitle"),
     sidebarConversationSnippet: document.getElementById("sidebarConversationSnippet"),
@@ -4011,6 +4015,7 @@
       state.externalRunningTurnId = nextExternalTurnId;
       state.externalQueueAvailable = Boolean(nextExternalTurnId && snapshot?.external_queue_available);
       elements.versionLabel.textContent = state.version ? `v${state.version}` : "--";
+      refreshUpdateStatus();
       if ((previousExternalTurnId || nextExternalTurnId) && (turnsChanged || previousExternalTurnId !== nextExternalTurnId)) {
         renderConversation();
       }
@@ -4097,6 +4102,30 @@
     return true;
   }
 
+  function refreshUpdateStatus() {
+    if (!elements.updateCurrentVersion) return;
+    elements.updateCurrentVersion.textContent = state.version ? `v${state.version}` : "--";
+    elements.updateUpstream.textContent = "检查中…";
+    fetch("/api/update/check")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!data) return;
+        elements.updateUpstream.textContent = data.upstream || "--";
+        const result = elements.updateResult;
+        if (data.has_update) {
+          result.textContent = data.forced
+            ? `发现 v${data.latest}（强制更新），终端执行 hilia update apply`
+            : `发现新版本 v${data.latest}，终端执行 hilia update apply`;
+          result.style.color = data.forced ? "#e06070" : "";
+        } else {
+          result.textContent = "已是最新版本";
+        }
+      })
+      .catch(() => {
+        elements.updateUpstream.textContent = "检查失败（离线？）";
+      });
+  }
+
   function handleSseEvent(name, event) {
     let data;
     try {
@@ -4132,6 +4161,16 @@
     }
     if (name === "conversation.reset") {
       loadBootstrap();
+      return;
+    }
+    if (name === "update.available") {
+      const version = data?.latest || "";
+      const forced = Boolean(data?.forced);
+      const text = forced
+        ? `发现新版本 v${version}（强制更新）：请运行 hilia update apply 更新`
+        : `发现新版本 v${version}：可运行 hilia update apply 更新`;
+      showToast(text, "info");
+      refreshUpdateStatus();
       return;
     }
     if (name === "config.reloaded") {

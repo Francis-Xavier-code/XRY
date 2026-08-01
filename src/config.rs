@@ -39,6 +39,10 @@ pub struct AppConfig {
     pub system_prompt_file: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
+    #[serde(default)]
+    pub license: LicenseConfig,
+    #[serde(default)]
+    pub update: crate::update::UpdateConfig,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -259,6 +263,37 @@ pub struct SkillsConfig {
     pub enabled: bool,
     #[serde(default)]
     pub allow_command_execution: bool,
+}
+
+/// 付费订阅配置（预留）：激活状态 / 离线激活码 / 在线 license 服务器地址。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LicenseConfig {
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub plan: String,
+    #[serde(default)]
+    pub activation_code: String,
+    #[serde(default)]
+    pub activated_at: String,
+    #[serde(default)]
+    pub expires_at: String,
+    /// 在线 license 服务器地址（预留，接入支付后使用）
+    #[serde(default)]
+    pub server: String,
+}
+
+impl Default for LicenseConfig {
+    fn default() -> Self {
+        Self {
+            status: "free".to_string(),
+            plan: String::new(),
+            activation_code: String::new(),
+            activated_at: String::new(),
+            expires_at: String::new(),
+            server: String::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -560,6 +595,8 @@ impl Default for AppConfig {
             memory: MemoryConfig::default(),
             system_prompt_file: Some("system-prompt.md".to_string()),
             system_prompt: None,
+            license: LicenseConfig::default(),
+            update: crate::update::UpdateConfig::default(),
         }
     }
 }

@@ -240,6 +240,12 @@
           <section class="settings-section settings-panel" data-settings-panel="general" hidden>
           <h2>全局设置</h2>
           <div class="config-form" id="generalConfigForm"></div>
+          <div class="settings-update-block" style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border,rgba(255,255,255,0.08))">
+            <h3 style="font-size:14px;margin:0 0 8px">版本与更新</h3>
+            <div class="settings-description" id="updateStatusLine" style="margin-bottom:10px">当前版本 <b id="updateCurrentVersion">--</b> · 上游：<span id="updateUpstream">--</span></div>
+            <button class="secondary-button compact-button" id="checkUpdateButton" type="button">检查更新</button>
+            <span class="settings-description" id="updateResult" style="margin-left:10px"></span>
+          </div>
           </section>
           <section class="settings-section settings-panel" data-settings-panel="tasks" hidden>
           <h2>定时任务</h2>

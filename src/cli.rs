@@ -859,6 +859,11 @@ pub enum Command {
     Napcat(NapcatArgs),
     Wecom(WecomArgs),
     Feishu(FeishuArgs),
+    /// 密钥与签名工具（开发者）
+    #[command(hide = true)]
+    Keys(KeysArgs),
+    License(LicenseArgs),
+    Update(UpdateArgs),
 }
 
 #[derive(Debug, Args)]
@@ -870,6 +875,54 @@ pub struct MessageArgs {
 #[derive(Debug, Args)]
 pub struct ResetArgs {
     pub scope: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct UpdateArgs {
+    #[command(subcommand)]
+    pub command: Option<UpdateCommand>,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum UpdateCommand {
+    /// 检查更新（拉取 update.json + 验签 + 对比版本）
+    Check,
+    /// 下载并应用更新（Windows：自动替换并重启）
+    Apply,
+    /// 显示更新配置（上游地址 / 镜像 / 强制策略）
+    Status,
+}
+
+#[derive(Debug, Args)]
+pub struct KeysArgs {
+    #[command(subcommand)]
+    pub command: Option<KeysCommand>,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum KeysCommand {
+    /// 生成一对 Ed25519 密钥（私钥请勿提交仓库）
+    Gen,
+    /// 签发激活码（需 HILIA_SIGN_KEY 环境变量）：<plan>|<user>|<expires_at 秒或 0>
+    SignLicense { payload: String },
+    /// 签发 update.json（需 HILIA_SIGN_KEY 环境变量）：hilia keys sign-update <文件>
+    SignUpdate { file: String },
+}
+
+#[derive(Debug, Args)]
+pub struct LicenseArgs {
+    #[command(subcommand)]
+    pub command: Option<LicenseCommand>,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum LicenseCommand {
+    /// 查看激活状态
+    Status,
+    /// 用激活码激活（离线签名激活码）
+    Activate { code: String },
+    /// 清除激活状态
+    Deactivate,
 }
 
 #[derive(Args)]
@@ -1395,7 +1448,7 @@ pub async fn run(cli: Cli, paths: GqyPaths) -> Result<()> {
                 "# 月夜希尔娅\n\n你好呀，我是**希尔娅** —— 活在 Windows 里的 AI 助理。\n\
                  \n\
                  ## 今天的待办\n\n\
-                 - 修好 [希尔娅的 GitHub](https://github.com/Francis-Xavier-code/GQY)\n\
+                 - 修好 [希尔娅的 GitHub](https://github.com/Francis-Xavier-code/XRY)\n\
                  - 学习 `Rust` 与 `OSC 8` 超链接\n\
                  - [x] 月夜主题已上线\n\
                  - [ ] 面板动画（下次）\n\n\
@@ -1440,6 +1493,9 @@ pub async fn run(cli: Cli, paths: GqyPaths) -> Result<()> {
         Some(Command::Napcat(args)) => crate::bridges::napcat::run(&paths, args).await,
         Some(Command::Wecom(args)) => crate::bridges::wecom::run(&paths, args).await,
         Some(Command::Feishu(args)) => crate::bridges::feishu::run(&paths, args).await,
+        Some(Command::Keys(args)) => run_keys(args),
+        Some(Command::License(args)) => run_license(&paths, args),
+        Some(Command::Update(args)) => run_update(&paths, args).await,
         None => {
             let message = join_message(cli.message);
             if message.is_empty() && io::stdin().is_terminal() {
@@ -2866,6 +2922,161 @@ fn regex_matches_secret_key(key: &str) -> bool {
     ["api_key", "api-key", "token", "password", "secret", "credential"]
         .iter()
         .any(|pattern| lower.contains(pattern))
+}
+
+
+/// `hilia keys`：开发者密钥工具（隐藏）。
+fn run_keys(args: KeysArgs) -> Result<()> {
+    match args.command.unwrap_or(KeysCommand::Gen) {
+        KeysCommand::Gen => {
+            let (secret, public) = crate::security::generate_keypair();
+            println!("Ed25519 密钥对（base64）：\n");
+            println!("私钥（请勿提交仓库，保存到 GitHub Secrets：HILIA_SIGN_KEY）：");
+            println!("  {secret}\n");
+            println!("公钥（填入 src/security.rs 的 PUBLIC_KEY_B64 并重新构建）：");
+            println!("  {public}");
+        }
+        KeysCommand::SignUpdate { file } => {
+            let secret = std::env::var("HILIA_SIGN_KEY")
+                .with_context(|| "需要环境变量 HILIA_SIGN_KEY（Ed25519 私钥 base64）")?;
+            let raw = std::fs::read_to_string(&file)
+                .with_context(|| format!("读取 {} 失败", file))?;
+            let mut info: crate::update::UpdateInfo = serde_json::from_str(&raw)
+                .context("update.json 不是有效 JSON")?;
+            if !info.signature.is_empty() {
+                bail!("update.json 已包含签名，请先移除 signature 字段");
+            }
+            let canonical = serde_json::to_vec(&info)?;
+            info.signature = crate::security::sign_with_secret(&canonical, &secret)?;
+            std::fs::write(&file, serde_json::to_string_pretty(&info)? + "\n")?;
+            println!("已签名并写回 {file}");
+        }
+        KeysCommand::SignLicense { payload } => {
+            let secret = std::env::var("HILIA_SIGN_KEY")
+                .with_context(|| "需要环境变量 HILIA_SIGN_KEY（Ed25519 私钥 base64）")?;
+            let parts: Vec<&str> = payload.split('|').collect();
+            if parts.len() != 3 {
+                bail!("payload 格式：<plan>|<user>|<expires_at 秒或 0>");
+            }
+            let expires: i64 = parts[2].trim().parse().with_context(|| "expires_at 必须是整数秒")?;
+            let code = crate::license::make_activation_code(&secret, parts[0], parts[1], expires)?;
+            println!("{code}");
+        }
+    }
+    Ok(())
+}
+
+/// `hilia update`：JSON 更新系统。
+async fn run_update(paths: &GqyPaths, args: UpdateArgs) -> Result<()> {
+    match args.command.unwrap_or(UpdateCommand::Check) {
+        UpdateCommand::Check => {
+            // 网络请求走 spawn_blocking：避免在 tokio 上下文 drop blocking client
+            let config = AppConfig::load_or_default(paths)?;
+            let paths = paths.clone();
+            let config = config.clone();
+            let result = tokio::task::spawn_blocking(move || crate::update::check_update(&config, &paths))
+                .await??;
+            if result.has_update {
+                println!(
+                    "发现新版本：v{}（当前 v{}）",
+                    result.latest_version, result.current_version
+                );
+                if result.forced {
+                    println!("⚠ 该版本为强制更新（低于最低支持版本或已开启强制更新）。");
+                    println!("执行 `hilia update apply` 立即更新。");
+                } else {
+                    println!("执行 `hilia update apply` 更新，或忽略。");
+                }
+                if !result.notes.is_empty() {
+                    println!("\n更新说明：\n{}", result.notes);
+                }
+                if !result.source_url.is_empty() {
+                    println!("\n上游切换提示：{}", result.source_url);
+                }
+            } else {
+                println!("当前已是最新版本（v{}）。", result.current_version);
+            }
+        }
+        UpdateCommand::Apply => {
+            let config = AppConfig::load_or_default(paths)?;
+            let fetch_paths = paths.clone();
+            let fetch_config = config.clone();
+            let (info, result) = tokio::task::spawn_blocking(move || {
+                let info = crate::update::fetch_update_info(&fetch_config, &fetch_paths)?;
+                let result = crate::update::check_update(&fetch_config, &fetch_paths)?;
+                Ok::<_, anyhow::Error>((info, result))
+            })
+            .await??;
+            if !result.has_update {
+                println!("当前已是最新版本（v{}），无需更新。", result.current_version);
+                return Ok(());
+            }
+            println!("开始更新到 v{} ...", result.latest_version);
+            if cfg!(windows) {
+                let apply_paths = paths.clone();
+                let apply_config = config.clone();
+                let apply_info = info.clone();
+                tokio::task::spawn_blocking(move || {
+                    crate::update::apply_windows_update(&apply_info, &apply_config, &apply_paths)
+                })
+                .await??;
+                println!("更新包已就绪，正在替换并重启（约 5 秒）。");
+            } else {
+                println!("当前平台不是 Windows，仅演示流程（不执行替换）。");
+                println!("{}", crate::update::render_update_info(&info));
+            }
+        }
+        UpdateCommand::Status => {
+            let config = AppConfig::load_or_default(paths)?;
+            println!("更新配置：");
+            println!("  上游地址：    {}", config.update.upstream_url);
+            println!(
+                "  自定义镜像：  {}",
+                if config.update.mirrors.is_empty() {
+                    "（使用内置加速源）".to_string()
+                } else {
+                    config.update.mirrors.join(", ")
+                }
+            );
+            println!("  启动检查：    {}", if config.update.check_on_startup { "开" } else { "关" });
+            println!("  强制更新：    {}", if config.update.force { "开" } else { "关" });
+        }
+    }
+    Ok(())
+}
+
+/// `hilia license`：查看 / 激活 / 清除订阅。
+fn run_license(paths: &GqyPaths, args: LicenseArgs) -> Result<()> {
+    match args.command.unwrap_or(LicenseCommand::Status) {
+        LicenseCommand::Status => {
+            let config = AppConfig::load_or_default(paths)?;
+            let state = crate::license::load(&config);
+            println!("{}", state.summary());
+            if state.is_expired() {
+                println!("⚠ 订阅已过期，请联系开发者续期。");
+            }
+            if !state.server.is_empty() {
+                println!("在线 license 服务器：{}（预留）", state.server);
+            }
+            println!("特性：{}", if state.has_feature("multi_device") { "多设备配对 ✓" } else { "多设备配对 ✗（免费版限 1 台）" });
+        }
+        LicenseCommand::Activate { code } => {
+            let payload = crate::license::activate(paths, &code)?;
+            let expires = if payload.expires_at > 0 {
+                format!("，有效期至 {}", chrono::DateTime::from_timestamp(payload.expires_at, 0)
+                    .map(|t| t.to_rfc3339())
+                    .unwrap_or_default())
+            } else {
+                "（永久）".to_string()
+            };
+            println!("✅ 激活成功：{plan}{expires}", plan = payload.plan);
+        }
+        LicenseCommand::Deactivate => {
+            crate::license::deactivate(paths)?;
+            println!("已清除激活状态（回到免费版）。");
+        }
+    }
+    Ok(())
 }
 
 fn run_balance(paths: &GqyPaths) -> Result<()> {

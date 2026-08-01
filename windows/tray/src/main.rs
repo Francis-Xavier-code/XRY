@@ -38,6 +38,7 @@ struct TrayApp {
     menu_mini: MenuItem,
     menu_config: MenuItem,
     menu_backup: MenuItem,
+    menu_check_update: MenuItem,
     menu_home: MenuItem,
     menu_autostart: CheckMenuItem,
     menu_quit: MenuItem,
@@ -132,6 +133,7 @@ impl TrayApp {
         let mini = MenuItem::new("迷你对话 Alt+G", true, None);
         let config = MenuItem::new("打开配置", true, None);
         let backup = MenuItem::new("立即备份", true, None);
+        let check_update = MenuItem::new("检查更新", true, None);
         let home = MenuItem::new("打开主目录", true, None);
         let autostart = CheckMenuItem::new("开机自启", true, is_autostart_enabled(), None);
         let quit = MenuItem::new("退出希尔娅", true, None);
@@ -144,6 +146,7 @@ impl TrayApp {
             &mini,
             &config,
             &backup,
+            &check_update,
             &home,
             &PredefinedMenuItem::separator(),
             &autostart,
@@ -159,6 +162,7 @@ impl TrayApp {
             menu_mini: mini,
             menu_config: config,
             menu_backup: backup,
+            menu_check_update: check_update,
             menu_home: home,
             menu_autostart: autostart,
             menu_quit: quit,
@@ -194,6 +198,8 @@ impl TrayApp {
                     open_config_file();
                 } else if key == self.menu_backup.id().0.as_str() {
                     let _ = Command::new(hilia_exe()).args(["backup", "now"]).spawn();
+                } else if key == self.menu_check_update.id().0.as_str() {
+                    check_for_update();
                 } else if key == self.menu_home.id().0.as_str() {
                     open_home_dir();
                 } else if key == self.menu_autostart.id().0.as_str() {
@@ -238,6 +244,17 @@ fn data_home() -> std::path::PathBuf {
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| std::path::PathBuf::from(r"C:\Users\Public"))
         .join("hilia")
+}
+
+/// 检查更新：运行 `hilia update check` 并把结果用消息框展示。
+fn check_for_update() {
+    let exe = hilia_exe();
+    let ps = format!(
+        "Add-Type -AssemblyName System.Windows.Forms;          $out = & '{exe}' update check 2>&1 | Out-String;          [System.Windows.Forms.MessageBox]::Show($out, '希尔娅 更新检查')"
+    );
+    let _ = Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &ps])
+        .spawn();
 }
 
 fn open_config_file() {
