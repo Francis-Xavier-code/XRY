@@ -324,10 +324,14 @@ pub fn import_tools(
             .unwrap_or(&entry.id);
         let dest = package_dir.join(file_name);
         fs::copy(&canonical, &dest)?;
-        let mut permissions = fs::metadata(&dest)?.permissions();
-        use std::os::unix::fs::PermissionsExt;
-        permissions.set_mode(0o755);
-        fs::set_permissions(&dest, permissions)?;
+        // Windows 无权限位概念；Unix 下设为可执行
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&dest)?.permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&dest, permissions)?;
+        }
 
         // id 规范化：脚本文件名不能直接当工具 id（须字母开头、无点号）
         let tool_id = normalize_tool_id(file_name);
@@ -554,10 +558,18 @@ fn auto_scan(dir: &Path) -> Result<Vec<ScriptEntry>> {
 }
 
 fn is_executable(path: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    fs::metadata(path)
-        .map(|meta| meta.permissions().mode() & 0o111 != 0)
-        .unwrap_or(false)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        return fs::metadata(path)
+            .map(|meta| meta.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false);
+    }
+    #[cfg(not(unix))]
+    {
+        // Windows：文件存在即可执行候选（脚本由解释器调用）
+        fs::metadata(path).map(|meta| meta.is_file()).unwrap_or(false)
+    }
 }
 
 /// 读文件头几行找 `Description:` 注释。

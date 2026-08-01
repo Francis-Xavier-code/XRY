@@ -3,6 +3,7 @@ use anyhow::{bail, Result};
 use chrono::{Local, TimeZone};
 use serde::{Deserialize, Serialize};
 use std::fs::File;
+#[cfg(unix)]
 use std::os::fd::AsRawFd;
 use std::path::PathBuf;
 
@@ -219,14 +220,18 @@ impl WorkerLock {
             .create(true)
             .write(true)
             .open(&path)?;
-        // 阻塞加锁：正常情况锁空闲，立即成功
-        let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
-        if result != 0 {
-            bail!(
-                "failed to lock alarm worker file {}: {}",
-                path.display(),
-                std::io::Error::last_os_error()
-            )
+        // 阻塞加锁：正常情况锁空闲，立即成功（Windows 无 flock，跳过）
+        #[cfg(unix)]
+        {
+            use std::os::fd::AsRawFd;
+            let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
+            if result != 0 {
+                bail!(
+                    "failed to lock alarm worker file {}: {}",
+                    path.display(),
+                    std::io::Error::last_os_error()
+                )
+            }
         }
         Ok(Self { _file: file })
     }
@@ -236,30 +241,36 @@ impl WorkerLock {
 /// 锁被占用时占用者只能是本闹钟 id 的 worker（锁文件按 id 隔离），
 /// 因此不需要再核对 PID 是否被系统复用。
 pub fn worker_alive(paths: &GqyPaths, id: &str, pid: u32) -> bool {
-    let path = lock_file(paths, id);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).ok();
-    }
-    let Ok(file) = std::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .open(&path)
-    else {
-        return process_exists(pid);
-    };
-    let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-    if result == 0 {
-        // 加锁成功：锁空闲，worker 已退出
-        false
-    } else {
+    #[cfg(unix)]
+    {
+        let path = lock_file(paths, id);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+        let Ok(file) = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(&path)
+        else {
+            return process_exists(pid);
+        };
+        let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        if result == 0 {
+            // 加锁成功：锁空闲，worker 已退出
+            return false;
+        }
         let errno = std::io::Error::last_os_error().raw_os_error();
         if errno == Some(libc::EWOULDBLOCK) {
             // 锁被 worker 持有
-            true
-        } else {
-            // 其他错误（如文件系统不支持）：退回 PID 判断
-            process_exists(pid)
+            return true;
         }
+        // 其他错误（如文件系统不支持）：退回 PID 判断
+        process_exists(pid)
+    }
+    #[cfg(not(unix))]
+    {
+        // Windows 无 flock：直接用 PID 判断
+        process_exists(pid)
     }
 }
 
