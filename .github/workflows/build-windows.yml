@@ -114,6 +114,8 @@ jobs:
         shell: pwsh
         run: |
           choco install nsis -y --no-progress
+          # choco 安装后 PATH 不刷新，显式加入 NSIS 目录
+          $env:Path += ";C:\Program Files (x86)\NSIS"
           makensis /DSTAGE_DIR="${{ env.stage_dir }}" /DAPP_VERSION=${{ env.stage_version }} windows/installer.nsi
           New-Item -ItemType Directory -Force -Path "${{ env.stage_dir }}/installer" | Out-Null
           Copy-Item "Hilia-Setup-${{ env.stage_version }}.exe" "${{ env.stage_dir }}/installer/" -Force
