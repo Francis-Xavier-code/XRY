@@ -387,6 +387,39 @@ $('addStudentBtn').onclick = () => openDialog('addStudent');
 $('addRecordBtn').onclick = () => openDialog('addRecord');
 $('importCsvBtn').onclick = () => openDialog('importCsv');
 
+// 导出 xlsx（按当前班级筛选；需辅导员私密钥匙激活）
+$('exportBtn').onclick = async () => {
+  const button = $('exportBtn');
+  button.disabled = true;
+  const original = button.textContent;
+  button.textContent = '导出中…';
+  try {
+    const classId = $('recordClassFilter').value ? Number($('recordClassFilter').value) : null;
+    const response = await api('POST', '/api/credits/export', { class_id: classId });
+    if (!response.ok) {
+      const error = await response.json().catch(() => null);
+      throw new Error((error && error.error) || `HTTP ${response.status}`);
+    }
+    const blob = await response.blob();
+    const disposition = response.headers.get('Content-Disposition') || '';
+    const match = disposition.match(/filename="?([^";]+)"?/);
+    const filename = match ? match[1] : `学分表-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    alert(`导出失败：${error.message || error}`);
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
+  }
+};
+
 let keywordTimer = null;
 $('studentKeyword').oninput = () => { clearTimeout(keywordTimer); keywordTimer = setTimeout(loadStudents, 300); };
 $('recordKeyword').oninput = () => { clearTimeout(keywordTimer); keywordTimer = setTimeout(loadRecords, 300); };

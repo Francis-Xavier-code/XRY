@@ -13,8 +13,8 @@ use anyhow::{Context, Result};
 use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
 use axum::extract::{ConnectInfo, DefaultBodyLimit, Path, Query, State};
 use axum::http::header::{
-    CACHE_CONTROL, CONTENT_SECURITY_POLICY, CONTENT_TYPE, COOKIE, HOST, ORIGIN, REFERRER_POLICY,
-    RETRY_AFTER, SET_COOKIE, X_CONTENT_TYPE_OPTIONS,
+    CACHE_CONTROL, CONTENT_DISPOSITION, CONTENT_SECURITY_POLICY, CONTENT_TYPE, COOKIE, HOST,
+    ORIGIN, REFERRER_POLICY, RETRY_AFTER, SET_COOKIE, X_CONTENT_TYPE_OPTIONS,
 };
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::middleware::{self, Next};
@@ -1019,6 +1019,7 @@ fn router(state: WebState) -> Router {
             put(credits_record_update).delete(credits_record_delete),
         )
         .route("/api/credits/import", post(credits_import))
+        .route("/api/credits/export", post(credits_export))
         .route("/api/update/check", get(update_check_api))
         .route("/api/pairing/create", post(pairing_create))
         .route("/api/pairing/request", post(pairing_request))
@@ -4232,6 +4233,153 @@ async fn credits_import(
             if skipped.is_empty() { String::new() } else { format!("，跳过 {} 条（详见跳过列表）", skipped.len()) }
         ),
     })))
+}
+
+/// 按班级导出 xlsx 学分表（需辅导员激活码；未激活时引导联系开发者）。
+async fn credits_export(
+    State(state): State<WebState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> std::result::Result<Response, ApiError> {
+    require_mutation(&headers, &state)?;
+    // 辅导员授权校验：config.license 已激活且 plan 为 admin/pro
+    let config = AppConfig::load_or_default(&state.paths).map_err(ApiError::internal)?;
+    let license = crate::license::load(&config);
+    let authorized = license.is_activated()
+        && (license.plan.contains("admin") || license.plan.contains("pro"));
+    if !authorized {
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "导出学分表需要辅导员私密钥匙（管理员激活码），请联系开发者 2101497063@qq.com 获取",
+        ));
+    }
+    let class_id = body.get("class_id").and_then(Value::as_i64);
+    let paths = state.paths.clone();
+    let bytes = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<u8>> {
+        let db = crate::state::CreditsDb::open(&paths.data_dir)?;
+        build_credits_xlsx(&db, class_id)
+    })
+    .await
+    .map_err(ApiError::internal)?
+    .map_err(ApiError::internal)?;
+    let filename = {
+        let db = crate::state::CreditsDb::open(&state.paths.data_dir).map_err(ApiError::internal)?;
+        let label = match class_id {
+            Some(id) => db
+                .list_classes()
+                .map_err(ApiError::internal)?
+                .into_iter()
+                .find(|class| class.id == id)
+                .map(|class| class.name)
+                .unwrap_or_else(|| "全部班级".to_string()),
+            None => "全部班级".to_string(),
+        };
+        format!("{}-学分表-{}.xlsx", label, chrono::Local::now().format("%Y%m%d"))
+    };
+    Ok((
+        [
+            (
+                CONTENT_TYPE.to_string(),
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet".to_string(),
+            ),
+            (
+                CONTENT_DISPOSITION.to_string(),
+                format!("attachment; filename=\"{}\"", filename),
+            ),
+        ],
+        bytes,
+    )
+        .into_response())
+}
+
+/// 生成 xlsx：Sheet1 学分明细，Sheet2 学生汇总（按班级可选）。
+fn build_credits_xlsx(db: &crate::state::CreditsDb, class_id: Option<i64>) -> anyhow::Result<Vec<u8>> {
+    use rust_xlsxwriter::{Format, FormatBorder, Workbook};
+    let mut workbook = Workbook::new();
+    let header_format = Format::new().set_bold().set_border(FormatBorder::Thin);
+    let cell_format = Format::new().set_border(FormatBorder::Thin);
+
+    // Sheet1：学分明细
+    let records = db.query_credits(None, class_id, None, "", "")?;
+    let sheet = workbook.add_worksheet().set_name("学分明细")?;
+    for (column, title) in [
+        "学号",
+        "姓名",
+        "班级",
+        "学分类型",
+        "分值",
+        "备注",
+        "操作人",
+        "时间",
+    ]
+    .iter()
+    .enumerate()
+    {
+        sheet.write_string_with_format(0, column as u16, *title, &header_format)?;
+    }
+    for (row, record) in records.iter().enumerate() {
+        let row = (row + 1) as u32;
+        sheet.write_string_with_format(row, 0, &record.student_no, &cell_format)?;
+        sheet.write_string_with_format(row, 1, &record.student_name, &cell_format)?;
+        sheet.write_string_with_format(
+            row,
+            2,
+            record.class_name.as_deref().unwrap_or("未分班"),
+            &cell_format,
+        )?;
+        sheet.write_string_with_format(
+            row,
+            3,
+            record.type_name.as_deref().unwrap_or("未分类"),
+            &cell_format,
+        )?;
+        sheet.write_number_with_format(row, 4, record.points, &cell_format)?;
+        sheet.write_string_with_format(row, 5, &record.note, &cell_format)?;
+        sheet.write_string_with_format(row, 6, &record.operator, &cell_format)?;
+        sheet.write_string_with_format(row, 7, &record.created_at, &cell_format)?;
+    }
+    sheet.set_column_width(0, 14)?;
+    sheet.set_column_width(1, 12)?;
+    sheet.set_column_width(2, 16)?;
+    sheet.set_column_width(3, 12)?;
+    sheet.set_column_width(4, 8)?;
+    sheet.set_column_width(5, 28)?;
+    sheet.set_column_width(6, 12)?;
+    sheet.set_column_width(7, 22)?;
+
+    // Sheet2：学生汇总
+    let students = db.query_students(class_id, "")?;
+    let summary_sheet = workbook.add_worksheet().set_name("学生汇总")?;
+    for (column, title) in ["学号", "姓名", "班级", "总学分", "类型明细"].iter().enumerate() {
+        summary_sheet.write_string_with_format(0, column as u16, *title, &header_format)?;
+    }
+    for (row, student) in students.iter().enumerate() {
+        let row = (row + 1) as u32;
+        summary_sheet.write_string_with_format(row, 0, &student.student_no, &cell_format)?;
+        summary_sheet.write_string_with_format(row, 1, &student.name, &cell_format)?;
+        summary_sheet.write_string_with_format(
+            row,
+            2,
+            student.class_name.as_deref().unwrap_or("未分班"),
+            &cell_format,
+        )?;
+        let summary = db.summary(Some(student.id), None)?;
+        summary_sheet.write_number_with_format(row, 3, summary.total, &cell_format)?;
+        let detail = summary
+            .by_type
+            .iter()
+            .map(|(name, points)| format!("{name}:{points}"))
+            .collect::<Vec<_>>()
+            .join("；");
+        summary_sheet.write_string_with_format(row, 4, &detail, &cell_format)?;
+    }
+    summary_sheet.set_column_width(0, 14)?;
+    summary_sheet.set_column_width(1, 12)?;
+    summary_sheet.set_column_width(2, 16)?;
+    summary_sheet.set_column_width(3, 10)?;
+    summary_sheet.set_column_width(4, 48)?;
+
+    Ok(workbook.save_to_buffer()?)
 }
 
 // ─────────────────────────── 更新检查 API ───────────────────────────

@@ -157,6 +157,8 @@ enum HttpFailureKind {
     Status,
     Authentication,
     RateLimit,
+    /// 额度用尽（402 / quota exceeded / 免费额度已用完）
+    Quota,
 }
 
 #[derive(Debug)]
@@ -168,10 +170,16 @@ struct HttpStatusFailure {
 impl HttpStatusFailure {
     fn classify(status: u16, body: &str) -> Self {
         let body = body.to_ascii_lowercase();
-        let kind = if body.contains("rate limit")
-            || body.contains("ratelimit")
+        let kind = if status == 402
+            || body.contains("insufficient_quota")
+            || body.contains("quota exceeded")
+            || body.contains("free quota")
             || body.contains("quota")
+            || body.contains("额度")
         {
+            // 额度用尽（付费/充值类问题），与 429 临时限流区分开
+            HttpFailureKind::Quota
+        } else if body.contains("rate limit") || body.contains("ratelimit") {
             HttpFailureKind::RateLimit
         } else if body.contains("unauthorized")
             || body.contains("forbidden")
@@ -503,6 +511,8 @@ fn cooldown_for_error(error: &anyhow::Error) -> Option<Duration> {
             HttpFailureKind::Authentication | HttpFailureKind::RateLimit => {
                 Some(Duration::from_secs(600))
             }
+            // 额度用尽短期重试无意义：冷却 10 分钟并走 failover
+            HttpFailureKind::Quota => Some(Duration::from_secs(600)),
             HttpFailureKind::Status => cooldown_for_status(failure.status),
         };
     }
@@ -922,6 +932,7 @@ impl OpenAiCompatibleClient {
         let request_id = gen_llm_request_id();
         let endpoints = self.endpoints.as_ref();
         let mut errors = Vec::new();
+        let mut saw_quota = false;
         let mut order = ordered_endpoint_indices(endpoints);
         if order.is_empty() {
             order = (0..endpoints.len()).collect();
@@ -997,6 +1008,9 @@ impl OpenAiCompatibleClient {
                             "LLM endpoint transport failure"
                         );
                     } else if let Some(failure) = err.downcast_ref::<HttpStatusFailure>() {
+                        if failure.kind == HttpFailureKind::Quota {
+                            saw_quota = true;
+                        }
                         tracing::error!(
                             request_id,
                             attempt = attempt + 1,
@@ -1031,6 +1045,11 @@ impl OpenAiCompatibleClient {
                     }
                 }
             }
+        }
+        if saw_quota {
+            bail!(
+                "免费额度已使用完毕：OpenCode 免费模型的额度已用完（HTTP 402 / quota exceeded）。\n请联系开发者 2101497063@qq.com 配置其他模型或更换 API 密钥。"
+            );
         }
         bail!(
             "no LLM provider/model endpoint succeeded (request {request_id}):\n- {}",
