@@ -10,7 +10,6 @@ description = "希尔娅 —— Windows AI 助理（班级学分管理 / 信息�
 strip = "symbols"
 lto = "thin"
 codegen-units = 1
-panic = "abort"
 
 [dependencies]
 anyhow = "1.0"

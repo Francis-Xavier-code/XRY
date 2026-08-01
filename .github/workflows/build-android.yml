@@ -37,6 +37,10 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_ENV"
           echo "当前版本：$VERSION"
 
+      - name: 生成 Android 平台文件（gradle wrapper 等，不覆盖已有配置）
+        working-directory: android
+        run: flutter create --platforms=android --org com.hilia .
+
       - name: 依赖安装
         working-directory: android
         run: flutter pub get
