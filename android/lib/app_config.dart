@@ -17,7 +17,7 @@ class AppConfig {
 
   // 内置 Ed25519 公钥（base64，XOR 混淆；与 Windows 端 src/security.rs 同密钥对）
   static String builtinPublicKeyB64() => _xor(
-        '"\u0003\u0014\u001c\u0012__W#\u001c$.\u00103\u0018<\u0001?>?U]TjZS\u001b\u0001%(\u0013/y P7.\u000b_^W\u007f"X',
+        '"\u0003\u0014\u001c\u0012__W#\u001c\u0024.\u00103\u0018<\u0001?>?U]TjZS\u001b\u0001%(\u0013/y P7.\u000b_^W\u007f"X',
         'hilia-key',
       );
 
