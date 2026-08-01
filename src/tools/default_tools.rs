@@ -551,7 +551,7 @@ async fn run_grep_text(
     let include_re = include
         .as_deref()
         .map(glob_to_regex)
-        .map(fancy_regex::Regex::new)
+        .map(|pattern| fancy_regex::Regex::new(&pattern))
         .transpose()?;
     let mut files = Vec::new();
     if is_file {
@@ -827,6 +827,7 @@ struct ClippedOutput {
 
 #[cfg(windows)]
 fn search_exit_status(match_count: usize) -> std::process::ExitStatus {
+    use std::os::windows::process::ExitStatusExt;
     // rg 语义：有匹配 exit 0，无匹配 exit 1
     std::process::ExitStatus::from_raw(if match_count == 0 { 1 } else { 0 })
 }
