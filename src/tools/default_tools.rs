@@ -417,20 +417,63 @@ async fn glob_files(args: Value) -> Result<String> {
     let max_results = max_results(&args);
     let output = tokio::time::timeout(
         std::time::Duration::from_secs(SEARCH_TIMEOUT_SECONDS),
-        Command::new("rg")
-            .arg("--no-config")
-            .arg("--files")
-            .arg("--no-messages")
-            .arg("--hidden")
-            .arg(format!("--iglob={pattern}"))
-            .args(search_exclude_args(&search_path))
-            .arg(".")
-            .current_dir(&search_path)
-            .stdin(Stdio::null())
-            .output(),
+        run_glob_files(search_path, pattern, max_results),
     )
     .await??;
     search_output_limited(output, max_results)
+}
+
+#[cfg(unix)]
+async fn run_glob_files(
+    search_path: PathBuf,
+    pattern: String,
+    _max_results: usize,
+) -> Result<std::process::Output> {
+    let output = Command::new("rg")
+        .arg("--no-config")
+        .arg("--files")
+        .arg("--no-messages")
+        .arg("--hidden")
+        .arg(format!("--iglob={pattern}"))
+        .args(search_exclude_args(&search_path))
+        .arg(".")
+        .current_dir(&search_path)
+        .stdin(Stdio::null())
+        .output()
+        .await?;
+    Ok(output)
+}
+
+#[cfg(windows)]
+async fn run_glob_files(
+    search_path: PathBuf,
+    pattern: String,
+    max_results: usize,
+) -> Result<std::process::Output> {
+    // Windows 无 ripgrep：内部枚举 + glob 匹配（近似 --iglob 大小写不敏感语义）
+    let regex = fancy_regex::Regex::new(&glob_to_regex(&pattern))?;
+    let mut files = Vec::new();
+    collect_search_files(&search_path, &mut files, 0)?;
+    let mut stdout = Vec::new();
+    let mut count = 0usize;
+    for file in files {
+        let Ok(relative) = file.strip_prefix(&search_path) else {
+            continue;
+        };
+        if regex.is_match(&relative.to_string_lossy()).unwrap_or(false) {
+            stdout.extend_from_slice(relative.to_string_lossy().as_bytes());
+            stdout.push(b'\n');
+            count += 1;
+            if count >= max_results {
+                break;
+            }
+        }
+    }
+    Ok(std::process::Output {
+        status: search_exit_status(count),
+        stdout,
+        stderr: Vec::new(),
+    })
 }
 
 async fn grep_text(args: Value) -> Result<String> {
@@ -446,6 +489,28 @@ async fn grep_text(args: Value) -> Result<String> {
     let search_root = prepare_search_path(&search_root)?;
     let pattern = required(&args, "pattern")?;
     let max_results = max_results(&args);
+    let include = args
+        .get("include")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| value.trim().to_string());
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(SEARCH_TIMEOUT_SECONDS),
+        run_grep_text(search_root, is_file, path.file_name().map(|n| n.to_string_lossy().to_string()), pattern, include, max_results),
+    )
+    .await??;
+    search_output_limited(output, max_results)
+}
+
+#[cfg(unix)]
+async fn run_grep_text(
+    search_root: PathBuf,
+    is_file: bool,
+    file_name: Option<String>,
+    pattern: String,
+    include: Option<String>,
+    _max_results: usize,
+) -> Result<std::process::Output> {
     let mut command = Command::new("rg");
     command
         .arg("--no-config")
@@ -453,30 +518,84 @@ async fn grep_text(args: Value) -> Result<String> {
         .arg("--no-messages")
         .arg("--hidden")
         .args(search_exclude_args(&search_root))
-        .arg(pattern);
-    if let Some(include) = args
-        .get("include")
-        .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-    {
-        command.arg("--iglob").arg(include.trim());
+        .arg(&pattern);
+    if let Some(include) = include {
+        command.arg("--iglob").arg(include);
     }
     if is_file {
-        if let Some(name) = path.file_name() {
+        if let Some(name) = file_name {
             command.arg(name);
         }
     } else {
         command.arg(".");
     }
-    let output = tokio::time::timeout(
-        std::time::Duration::from_secs(SEARCH_TIMEOUT_SECONDS),
-        command
-            .current_dir(search_root)
-            .stdin(Stdio::null())
-            .output(),
-    )
-    .await??;
-    search_output_limited(output, max_results)
+    let output = command
+        .current_dir(search_root)
+        .stdin(Stdio::null())
+        .output()
+        .await?;
+    Ok(output)
+}
+
+#[cfg(windows)]
+async fn run_grep_text(
+    search_root: PathBuf,
+    is_file: bool,
+    file_name: Option<String>,
+    pattern: String,
+    include: Option<String>,
+    max_results: usize,
+) -> Result<std::process::Output> {
+    // Windows 无 ripgrep：内部逐行搜索（输出 "路径:行号:内容"，无匹配 exit 1 同 rg）
+    let regex = fancy_regex::Regex::new(&pattern)?;
+    let include_re = include
+        .as_deref()
+        .map(glob_to_regex)
+        .map(fancy_regex::Regex::new)
+        .transpose()?;
+    let mut files = Vec::new();
+    if is_file {
+        if let Some(name) = file_name {
+            files.push(search_root.join(name));
+        }
+    } else {
+        collect_search_files(&search_root, &mut files, 0)?;
+    }
+    let mut stdout = Vec::new();
+    let mut count = 0usize;
+    'outer: for file in files {
+        if let Some(include_re) = &include_re {
+            let name = file.file_name().unwrap_or_default().to_string_lossy();
+            if !include_re.is_match(&name).unwrap_or(false) {
+                continue;
+            }
+        }
+        // 跳过二进制文件（rg 只搜文本）
+        let Ok(contents) = std::fs::read(&file) else {
+            continue;
+        };
+        if contents.contains(&0) {
+            continue;
+        }
+        let text = String::from_utf8_lossy(&contents);
+        let relative = file.strip_prefix(&search_root).unwrap_or(&file);
+        for (index, line) in text.lines().enumerate() {
+            if regex.is_match(line).unwrap_or(false) {
+                stdout.extend_from_slice(
+                    format!("{}:{}:{}\n", relative.to_string_lossy(), index + 1, line).as_bytes(),
+                );
+                count += 1;
+                if count >= max_results {
+                    break 'outer;
+                }
+            }
+        }
+    }
+    Ok(std::process::Output {
+        status: search_exit_status(count),
+        stdout,
+        stderr: Vec::new(),
+    })
 }
 
 async fn run_command(args: Value, allowed: bool, progress: ToolProgress) -> Result<String> {
@@ -702,6 +821,116 @@ struct ClippedOutput {
     text: String,
     truncated: bool,
     omitted_chars: usize,
+}
+
+// ─────────────────────── Windows 内部搜索（无 ripgrep 依赖） ───────────────────────
+
+#[cfg(windows)]
+fn search_exit_status(match_count: usize) -> std::process::ExitStatus {
+    // rg 语义：有匹配 exit 0，无匹配 exit 1
+    std::process::ExitStatus::from_raw(if match_count == 0 { 1 } else { 0 })
+}
+
+#[cfg(windows)]
+fn collect_search_files(
+    dir: &std::path::Path,
+    out: &mut Vec<std::path::PathBuf>,
+    depth: usize,
+) -> std::io::Result<()> {
+    if depth > 64 {
+        return Ok(());
+    }
+    let read_dir = match std::fs::read_dir(dir) {
+        Ok(read_dir) => read_dir,
+        Err(_) => return Ok(()),
+    };
+    for entry in read_dir {
+        let Ok(entry) = entry else {
+            continue;
+        };
+        if entry.file_name() == ".git" {
+            continue;
+        }
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        let path = entry.path();
+        if file_type.is_dir() {
+            collect_search_files(&path, out, depth + 1)?;
+        } else if file_type.is_file() {
+            out.push(path);
+        }
+    }
+    Ok(())
+}
+
+/// rg `--iglob` 的近似实现：`*`→`[^/]*`，`**`→`.*`，`?`→`[^/]`，
+/// 字符类 `[...]` 与分支 `{a,b}` 原样保留，其余字符转义；整体大小写不敏感。
+#[cfg(windows)]
+fn glob_to_regex(glob: &str) -> String {
+    let mut out = String::from("(?i)^");
+    let chars: Vec<char> = glob.chars().collect();
+    let mut i = 0usize;
+    while i < chars.len() {
+        match chars[i] {
+            '*' => {
+                if chars.get(i + 1) == Some(&'*') {
+                    out.push_str(".*");
+                    i += 2;
+                } else {
+                    out.push_str("[^/]*");
+                    i += 1;
+                }
+            }
+            '?' => {
+                out.push_str("[^/]");
+                i += 1;
+            }
+            '[' => {
+                let mut j = i + 1;
+                if chars.get(j) == Some(&'^') {
+                    j += 1;
+                }
+                if chars.get(j) == Some(&']') {
+                    j += 1;
+                }
+                while j < chars.len() && chars[j] != ']' {
+                    j += 1;
+                }
+                if j < chars.len() {
+                    out.push_str(&chars[i..=j].iter().collect::<String>());
+                    i = j + 1;
+                } else {
+                    out.push_str("\\[");
+                    i += 1;
+                }
+            }
+            '{' => {
+                let mut j = i + 1;
+                while j < chars.len() && chars[j] != '}' {
+                    j += 1;
+                }
+                if j < chars.len() {
+                    out.push_str(&chars[i..=j].iter().collect::<String>());
+                    i = j + 1;
+                } else {
+                    out.push_str("\\{");
+                    i += 1;
+                }
+            }
+            c if ".^$|()+\\".contains(c) => {
+                out.push('\\');
+                out.push(c);
+                i += 1;
+            }
+            c => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    out.push('$');
+    out
 }
 
 fn clip_output_with_meta(value: &str) -> ClippedOutput {

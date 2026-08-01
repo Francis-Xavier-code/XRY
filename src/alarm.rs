@@ -422,6 +422,8 @@ mod tests {
         assert!(load(&paths).unwrap().is_empty());
     }
 
+    // 依赖 flock 语义（Windows 无 flock，存活判定退化为 PID 检查）
+    #[cfg(unix)]
     #[test]
     fn worker_lock_is_held_while_alive_and_released_on_drop() {
         let temp = tempfile::tempdir().unwrap();
@@ -440,6 +442,8 @@ mod tests {
         assert!(!worker_alive(&paths, id, std::process::id()));
     }
 
+    // 依赖 flock 语义（Windows 无 flock，存活判定退化为 PID 检查）
+    #[cfg(unix)]
     #[test]
     fn cleanup_dead_keeps_records_with_live_workers_only() {
         let temp = tempfile::tempdir().unwrap();
