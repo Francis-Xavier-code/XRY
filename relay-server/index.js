@@ -197,7 +197,7 @@ function handleAuth(ws, msg) {
       pairing_code: msg.code,
     };
     devices.set(deviceId, device);
-    send(ws, { type: 'pair_pending', device_id: deviceId, expires_in: Math.max(0, pairing.expires_at - Date.now()) });
+    send(ws, { type: 'pair_pending', device_id: deviceId, token: device.token, expires_in: Math.max(0, pairing.expires_at - Date.now()) });
     // 通知桌面有配对请求
     sendToDevice(pairing.device_id, {
       type: 'pair_request',
@@ -377,7 +377,7 @@ async function handleHttp(req, res) {
     // 接受：告诉 APK 配对成功
     for (const [id, device] of devices) {
       if (device.pairing_code === body.code) {
-        send(device.ws, { type: 'pair_result', accepted: true, desktop_id: pairing.device_id });
+        send(device.ws, { type: 'pair_result', accepted: true, desktop_id: pairing.device_id, token: device.token, device_id: device.id });
         device.pairing_code = null;
         device.binding = pairing.device_id;
       }

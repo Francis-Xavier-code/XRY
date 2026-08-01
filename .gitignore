@@ -1,6 +1,12 @@
 /target/
 /.toolchain/
 /windows/tray/target/
+/tools/update-signer/target/
+/android/build/
+/android/.dart_tool/
+/android/.flutter-plugins*
+/android/pubspec.lock
+/android/android/local.properties
 /.idea/
 /.vscode/
 .DS_Store

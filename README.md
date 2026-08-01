@@ -16,9 +16,12 @@
 | 信息查询 | 学生按学号/姓名/班级查询；学生自助绑定后可查自己的学分 |
 | 面板 | 浏览器内的对话面板（聊天 + 设置 + 学分管理页） |
 | 迷你对话 | 独立小窗口，Alt+G 随时呼出 |
-| 托盘 | 系统托盘菜单：面板/迷你/配置/备份/主目录/开机自启 |
+| 托盘 | 系统托盘菜单：面板/迷你/配置/备份/主目录/开机自启/检查更新 |
 | 终端 | PowerShell 里直接输入 `hilia` 对话，或 `hilia "问题"` 单次问答 |
+| Android App | 学生端 APK：扫码配对 → 查学分 / 与希尔娅对话（走互联网中继） |
 | 三平台接入 | QQ（NapCat）/ 企业微信 / 飞书 群聊 @机器人 提问 |
+| JSON 更新 | update.json 签名清单 + 多 GitHub 加速源 + 上游切换 + 强制更新 |
+| 付费预留 | 离线激活码（Ed25519 签名）/ 在线订阅接口占位 / 功能门控 |
 | 记忆 | 对话记忆、心情日志、自动归档（数据全在本地） |
 | 知识库 | 内置 Windows 维护 + 学分系统使用手册，可继续追加 |
 
@@ -38,9 +41,19 @@ hilia-tray.exe       # 系统托盘
 hilia web            # 只启动面板服务（默认 http://127.0.0.1:4096）
 ```
 
-### 需要 Node.js（仅三平台桥接需要）
+### 需要 Node.js（仅桥接需要）
 
-QQ/企业微信/飞书桥接由 Node.js 运行（Node ≥ 22）。不需要桥接的话，只装希尔娅即可。
+QQ/企业微信/飞书/APK 中继桥接由 Node.js 运行（Node ≥ 22）。不需要桥接的话，只装希尔娅即可。
+
+### Android App（学生端）
+
+从 GitHub Releases 下载 `Hilia-Android-x.y.z.apk` 安装（允许未知来源应用）：
+
+1. 打开 App →「扫码配对」扫描 Windows 面板 → 设置 → 设备配对 → 生成的二维码
+2. 辅导员在面板弹出的确认框点「允许」
+3. 配对成功后即可在手机上查学分、和希尔娅对话
+
+> 手机与电脑之间走互联网中继（relay-server），需要先部署中继并配置 `hilia relay`，详见 `docs/01-指南/中继部署指南.md`。
 
 ## 学分管理快速上手（辅导员）
 
@@ -81,6 +94,42 @@ QQ/企业微信/飞书桥接由 Node.js 运行（Node ≥ 22）。不需要桥�
 | 飞书 | `hilia feishu config ...` → `cd <bridges>/feishu && npm ci` → `hilia feishu install` | 官方 SDK 长连接，**无需公网地址** |
 
 详细说明见 `communication/README.md` 与 `docs/01-指南/通信接入指南.md`。
+
+### APK 中继（互联网通信）
+
+```powershell
+hilia relay config relay_url wss://你的中继域名/ws
+hilia relay install
+```
+
+中继服务器代码在 `relay-server/`，部署文档见 `docs/01-指南/中继部署指南.md`。
+
+## 版本更新（update.json）
+
+- `hilia update check`：拉取签名清单（update.json，多加速源轮询）对比版本
+- `hilia update apply`：下载 → sha256 + Ed25519 签名校验 → 自动替换并重启
+- 默认上游：`https://raw.githubusercontent.com/Francis-Xavier-code/XRY/main/update.json`
+- 加速源：内置 ghproxy / gh-proxy / ghfast 等，`hilia config set update.mirrors [...]` 可自定义
+- 上游切换：`hilia config set update.upstream_url <新地址>`，或 update.json 的 `next` 字段提示
+- 强制更新：update.json 的 `min_version` 或 `hilia config set update.force true`
+- 启动时自动检查（面板收到提示）；清单无签名一律拒绝
+- Android 客户端从 update.json 的 `apk` 段（或 update-apk.json）检查更新
+
+## 激活与授权（预留付费能力）
+
+- `hilia license status`：查看激活状态与功能门控
+- `hilia license activate <激活码>`：输入开发者签发的激活码（HILIA1.xxx.yyy）
+- 激活码由开发者私钥签发（`hilia keys sign-license`），客户端内置公钥验签
+- 在线订阅接口已预留（`license.server`），接入支付后即可启用
+- 当前免费版可用全部基础功能；`multi_device` 等多设备特性预留门控
+
+> 防逆向说明：发布二进制 strip + 字符串编译期混淆（obfstr）+ 激活码/更新清单 Ed25519 签名验证 + 下载包 sha256 校验。私钥只存在开发者侧（GitHub Secrets），客户端仅有公钥，因此伪造激活码或篡改更新包在签名层即被拒绝。完全防止本地破解不可能，关键价值（激活、更新、授权）全部建立在签名与服务器侧。
+
+## Android 端安全
+
+- 扫码内容为一次性配对码（5 分钟过期），配对需辅导员在面板确认
+- 消息经中继转发，中继不落盘；生产部署必须启用 WSS/TLS
+- APK 内置与 Windows 端相同的签名公钥，拒绝未签名更新
 
 ## 数据与隐私
 

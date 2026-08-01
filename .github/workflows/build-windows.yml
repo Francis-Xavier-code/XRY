@@ -18,6 +18,8 @@ env:
 jobs:
   build:
     runs-on: windows-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -66,6 +68,45 @@ jobs:
           Copy-Item windows/install.ps1 $stage/install.ps1
           Compress-Archive -Path $stage -DestinationPath "$stage.zip"
           echo "stage_dir=$stage" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "stage_version=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: 生成签名 update.json（版本更新清单）
+        shell: pwsh
+        run: |
+          $version = $env:stage_version
+          $zip = "${{ env.stage_dir }}.zip"
+          $sha = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLower()
+          $size = (Get-Item $zip).Length
+          $repo = "${{ github.repository }}"
+          $urls = @(
+            "https://github.com/$repo/releases/download/v$version/Hilia-$version-windows.zip",
+            "https://ghproxy.net/https://github.com/$repo/releases/download/v$version/Hilia-$version-windows.zip",
+            "https://gh-proxy.com/https://github.com/$repo/releases/download/v$version/Hilia-$version-windows.zip",
+            "https://ghfast.top/https://github.com/$repo/releases/download/v$version/Hilia-$version-windows.zip"
+          ) | ConvertTo-Json -Compress
+          $notes = "希尔娅 v$version（Windows x86_64）"
+          $json = @{
+            version = $version
+            min_version = "0.6.0"
+            windows = @{
+              version = $version
+              urls = $urls
+              sha256 = $sha
+              size = $size
+            }
+            notes = $notes
+          } | ConvertTo-Json -Depth 4
+          Set-Content -Path update.json -Value $json -Encoding UTF8
+          # 签名（有私钥 Secrets 时）
+          if ("${{ secrets.HILIA_SIGN_KEY }}") {
+            $env:HILIA_SIGN_KEY = "${{ secrets.HILIA_SIGN_KEY }}"
+            & "${{ env.stage_dir }}/hilia.exe" keys sign-update update.json
+          } else {
+            Write-Host "⚠ 未配置 HILIA_SIGN_KEY，update.json 未签名"
+          }
+          Copy-Item update.json "${{ env.stage_dir }}/update.json"
+          Copy-Item update.json "${{ env.stage_dir }}/update-windows.json"
+          echo "update_json_ready=true" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
@@ -75,6 +116,7 @@ jobs:
             ${{ env.stage_dir }}.zip
             ${{ env.stage_dir }}/hilia.exe
             ${{ env.stage_dir }}/hilia-tray.exe
+            ${{ env.stage_dir }}/update.json
           if-no-files-found: error
 
       - name: 发布 GitHub Release（tag 触发）
@@ -83,9 +125,11 @@ jobs:
         with:
           files: |
             ${{ env.stage_dir }}.zip
+            ${{ env.stage_dir }}/update.json
           body: |
             希尔娅 v${{ github.ref_name }}（Windows x86_64）
 
             - 解压 `install.ps1` 同目录运行即可安装（安装到 `C:\hilia`）
             - 或手动解压后运行 `hilia.exe` / `hilia-tray.exe`
+            - 更新：`hilia update check` / `hilia update apply`（自动走多加速源）
             - 开发者：2101497063@qq.com

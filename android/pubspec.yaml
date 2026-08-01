@@ -1,0 +1,24 @@
+name: hilia_app
+description: "希尔娅 —— 班级学分管理 AI 助理（学生端）"
+publish_to: "none"
+version: 0.6.0+1
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  web_socket_channel: ^2.4.5
+  mobile_scanner: ^5.2.3
+  shared_preferences: ^2.2.3
+  http: ^1.2.1
+  cryptography: ^2.7.0
+  url_launcher: ^6.2.6
+  intl: ^0.19.0
+
+dev_dependencies:
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
