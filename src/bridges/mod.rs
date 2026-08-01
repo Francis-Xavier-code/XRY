@@ -179,6 +179,16 @@ pub fn node_bin() -> String {
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| {
             if cfg!(windows) {
+                // 优先使用随包分发的便携 Node（$INSTDIR\node\node.exe），
+                // 导员电脑无需安装 Node 即可运行中继/企微/飞书等桥接
+                if let Ok(exe) = std::env::current_exe() {
+                    if let Some(dir) = exe.parent() {
+                        let bundled = dir.join("node").join("node.exe");
+                        if bundled.is_file() {
+                            return bundled.to_string_lossy().into_owned();
+                        }
+                    }
+                }
                 "node".to_string()
             } else {
                 "/opt/homebrew/bin/node".to_string()

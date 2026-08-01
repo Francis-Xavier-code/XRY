@@ -67,6 +67,14 @@ jobs:
           Copy-Item src/memes $stage/memes -Recurse
           Copy-Item communication $stage/communication -Recurse
           Remove-Item $stage/communication/feishu/node_modules -Recurse -Force -ErrorAction SilentlyContinue
+          # 捆绑便携 Node.js（桥接脚本 runtime：中继/NapCat/企微/飞书，导员无需自行安装）
+          $nodeIndex = Invoke-RestMethod "https://nodejs.org/dist/latest-v20.x/"
+          $nodeZipName = ($nodeIndex -split '"' | Where-Object { $_ -like 'node-v*-win-x64.zip' } | Select-Object -First 1)
+          $nodeZip = "$env:RUNNER_TEMP\$nodeZipName"
+          Invoke-WebRequest "https://nodejs.org/dist/latest-v20.x/$nodeZipName" -OutFile $nodeZip
+          Expand-Archive $nodeZip "$env:RUNNER_TEMP\node-extract" -Force
+          New-Item -ItemType Directory -Force -Path "$stage\node" | Out-Null
+          Copy-Item "$env:RUNNER_TEMP\node-extract\node-v*-win-x64\node.exe" "$stage\node\node.exe"
           Copy-Item windows/install.ps1 $stage/install.ps1
           Compress-Archive -Path $stage -DestinationPath "$stage.zip"
           echo "stage_dir=$stage" | Out-File -FilePath $env:GITHUB_ENV -Append

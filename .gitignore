@@ -25,3 +25,6 @@
 # NapCat QQ 机器人（放用户目录，不放进项目）
 /napcat/
 /qq-napcat/
+
+# 内部对接文档（不随仓库推送）
+/WIN-APK对接文档.md
