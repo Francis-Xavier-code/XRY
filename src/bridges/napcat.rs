@@ -1,23 +1,22 @@
-//! `gqy napcat`：NapCat (QQ) 桥接管理。
+//! `hilia napcat`：NapCat (QQ) 桥接管理。
 //!
 //! 子命令：
 //! - `status`：查看配置与自启动状态
-//! - `install`：安装桥接 LaunchAgent（自启动，KeepAlive 托管）；`--napcat <dir>` 同时托管 NapCat 本体
+//! - `install`：安装桥接自启动（Windows 计划任务 / macOS LaunchAgent，KeepAlive 托管）
 //! - `uninstall`：移除自启动（不删配置与数据）
 //! - `config <key> <value>`：设置 ws_url / self_id / bin / enabled
 //!
-//! NapCat 本体（QQ 客户端 + NapCat 插件）依赖本机 QQ：`/Applications/QQ.app`。
-//! 未安装时可以让顾清影在对话里帮你下载部署（她有下载与文件工具）。
+//! NapCat 本体（QQ 客户端 + NapCat 插件）在 Windows 上由用户自行安装运行
+//! （NapCat.QQ 一键版或手动版），桥接通过 `ws://127.0.0.1:3001` 连接 OneBot v11。
 
 use super::NapcatConfig;
 use crate::paths::GqyPaths;
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 use clap::{Args, Subcommand};
 use serde_json::json;
-use std::path::{Path, PathBuf};
 
-const BRIDGE_LABEL: &str = "com.gqy.napcat-bridge";
-const NAPCAT_LABEL: &str = "com.gqy.napcat";
+
+const BRIDGE_LABEL: &str = "HiliaNapcatBridge";
 
 #[derive(Debug, Args)]
 pub struct NapcatArgs {
@@ -28,11 +27,7 @@ pub struct NapcatArgs {
 #[derive(Debug, Subcommand)]
 pub enum NapcatCommand {
     Status,
-    Install {
-        /// NapCat 本体目录（含 QQ 副本或 NapCat 文件）；提供后同时托管本体自启动
-        #[arg(long, value_name = "DIR")]
-        napcat: Option<PathBuf>,
-    },
+    Install,
     Uninstall,
     /// 设置配置项：ws_url / self_id / bin / enabled
     Config {
@@ -44,7 +39,7 @@ pub enum NapcatCommand {
 pub async fn run(paths: &GqyPaths, args: NapcatArgs) -> Result<()> {
     match args.command.unwrap_or(NapcatCommand::Status) {
         NapcatCommand::Status => run_status(paths),
-        NapcatCommand::Install { napcat } => run_install(paths, napcat),
+        NapcatCommand::Install => run_install(paths),
         NapcatCommand::Uninstall => run_uninstall(paths),
         NapcatCommand::Config { key, value } => run_config(paths, &key, &value),
     }
@@ -95,11 +90,11 @@ fn run_status(paths: &GqyPaths) -> Result<()> {
     println!("  桥接脚本:  {}", super::bridge_script(paths, "napcat")?.display());
     println!(
         "  桥接自启动: {}",
-        if super::launchctl_status(BRIDGE_LABEL)? { "运行中" } else { "未安装" }
-    );
-    println!(
-        "  NapCat 本体: {}",
-        if super::launchctl_status(NAPCAT_LABEL)? { "运行中" } else { "未托管" }
+        if super::service_status(BRIDGE_LABEL)? {
+            "运行中"
+        } else {
+            "未安装"
+        }
     );
     let bridge_log = super::bridge_log_path(paths, "napcat");
     if bridge_log.exists() {
@@ -112,112 +107,82 @@ fn run_status(paths: &GqyPaths) -> Result<()> {
     Ok(())
 }
 
-fn run_install(paths: &GqyPaths, napcat_dir: Option<PathBuf>) -> Result<()> {
+fn bridge_env(paths: &GqyPaths, config: &NapcatConfig) -> Vec<(&'static str, String)> {
+    vec![
+        ("HILIA_HOME", paths.home_hint()),
+        ("HILIA_WS_URL", config.ws_url.clone()),
+        ("HILIA_SELF_ID", config.self_id.clone()),
+        ("HILIA_BIN", paths.bin_hint()),
+        (
+            "HILIA_BRIDGE_LOG",
+            super::bridge_log_path(paths, "napcat").display().to_string(),
+        ),
+    ]
+}
+
+fn run_install(paths: &GqyPaths) -> Result<()> {
     let config = config_for(paths)?;
     if !config.enabled {
         println!("桥接当前处于禁用状态（enabled=false），仅写入自启动配置不加载。");
     }
-
-    // 1. 桥接 LaunchAgent
     let script = super::bridge_script(paths, "napcat")?;
-    let plist = bridge_plist(paths, &config, &script)?;
-    let plist_path = launch_agents_dir()?.join(format!("{BRIDGE_LABEL}.plist"));
-    super::write_plist(&plist_path, &plist)?;
-    println!("已写入 {}", plist_path.display());
-    if config.enabled {
-        super::launchctl_unload(BRIDGE_LABEL).ok();
-        super::launchctl_load(&plist_path)?;
-        println!("✅ 桥接自启动已加载（KeepAlive 托管，进程崩溃自动重启）");
-    }
 
-    // 2. NapCat 本体（可选）
-    if let Some(dir) = napcat_dir {
-        install_napcat_daemon(paths, &config, &dir)?;
-    } else {
-        check_qq_available()?;
+    #[cfg(windows)]
+    {
+        let launcher = super::bridge_launchers_dir(paths)?.join("napcat-bridge.cmd");
+        super::write_launcher_cmd(&launcher, &bridge_env(paths, &config), &config.bin)?;
+        println!("已写入 {}", launcher.display());
+        if config.enabled {
+            super::service_uninstall(BRIDGE_LABEL).ok();
+            super::service_install(BRIDGE_LABEL, &launcher)?;
+            println!("✅ 桥接自启动已注册（计划任务 ONLOGON，登录后自动运行）");
+        }
     }
+    #[cfg(not(windows))]
+    {
+        let log = super::bridge_log_path(paths, "napcat");
+        let plist = json!({
+            "Label": BRIDGE_LABEL,
+            "ProgramArguments": [config.bin, script.to_str().unwrap_or_default()],
+            "EnvironmentVariables": {
+                "HOME": std::env::var_os("HOME").map(|v| v.to_string_lossy().into_owned()).unwrap_or_default(),
+                "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
+                "HILIA_HOME": paths.home_hint(),
+                "HILIA_WS_URL": config.ws_url,
+                "HILIA_SELF_ID": config.self_id,
+                "HILIA_BIN": paths.bin_hint(),
+                "HILIA_BRIDGE_LOG": log.to_str().unwrap_or_default(),
+            },
+            "RunAtLoad": true,
+            "KeepAlive": true,
+            "StandardOutPath": log.to_str().unwrap_or_default(),
+            "StandardErrorPath": log.to_str().unwrap_or_default(),
+        });
+        if config.enabled {
+            super::service_uninstall(BRIDGE_LABEL).ok();
+            super::launchctl_install(BRIDGE_LABEL, &plist)?;
+            println!("✅ 桥接自启动已加载（LaunchAgent KeepAlive 托管）");
+        }
+    }
+    let _ = script;
+
     println!();
     println!("下一步：");
     if config.self_id.is_empty() {
-        println!("  · 设置 QQ 号：gqy napcat config self_id <你的QQ号>");
+        println!("  · 设置 QQ 号：hilia napcat config self_id <你的QQ号>");
     }
-    println!("  · 查看状态：gqy napcat status");
+    println!("  · 查看状态：hilia napcat status");
+    println!("  · NapCat 本体请自行安装运行（Windows：NapCat.QQ 一键版），监听 {}", config.ws_url);
     Ok(())
-}
-
-fn install_napcat_daemon(paths: &GqyPaths, config: &NapcatConfig, dir: &Path) -> Result<()> {
-    let qq_bin = dir.join("QQ.app/Contents/MacOS/QQ");
-    if !qq_bin.is_file() {
-        bail!(
-            "{} 下没有 QQ.app（NapCat 需要 QQ 客户端承载插件）。请确认目录正确。",
-            dir.display()
-        );
-    }
-    if config.self_id.is_empty() {
-        bail!("托管 NapCat 本体前请先设置 QQ 号：gqy napcat config self_id <你的QQ号>");
-    }
-    let plist = json!({
-        "Label": NAPCAT_LABEL,
-        "ProgramArguments": [
-            qq_bin.to_str().unwrap_or_default(),
-            "--no-sandbox",
-            "-q",
-            config.self_id,
-        ],
-        "RunAtLoad": true,
-        "KeepAlive": true,
-        "ProcessType": "Background",
-        "WorkingDirectory": dir.to_str().unwrap_or_default(),
-        "StandardOutPath": paths.logs_dir().join("napcat.launchd.log").to_str().unwrap_or_default(),
-        "StandardErrorPath": paths.logs_dir().join("napcat.launchd.log").to_str().unwrap_or_default(),
-    });
-    let plist_path = launch_agents_dir()?.join(format!("{NAPCAT_LABEL}.plist"));
-    super::write_plist(&plist_path, &plist)?;
-    super::launchctl_unload(NAPCAT_LABEL).ok();
-    super::launchctl_load(&plist_path)?;
-    println!("✅ NapCat 本体自启动已加载（KeepAlive 托管）");
-    Ok(())
-}
-
-fn check_qq_available() -> Result<()> {
-    let candidates = [
-        PathBuf::from("/Applications/QQ.app"),
-        PathBuf::from(env_home().join("qq-napcat/QQ.app")),
-    ];
-    for candidate in &candidates {
-        if candidate.join("Contents/MacOS/QQ").is_file() {
-            println!("检测到 QQ 客户端：{}", candidate.display());
-            println!(
-                "提示：如需托管 NapCat 本体自启动，执行 gqy napcat install --napcat {}",
-                candidate.display()
-            );
-            return Ok(());
-        }
-    }
-    println!(
-        "⚠ 未检测到 QQ 客户端（NapCat 本体依赖）。可以让顾清影在对话里帮你下载部署，"
-    );
-    println!("  或手动安装后执行 gqy napcat install --napcat <QQ所在目录>");
-    Ok(())
-}
-
-fn env_home() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/Users/Shared"))
 }
 
 fn run_uninstall(paths: &GqyPaths) -> Result<()> {
-    let _ = paths;
-    super::launchctl_unload(BRIDGE_LABEL)?;
-    super::launchctl_unload(NAPCAT_LABEL).ok();
-    for label in [BRIDGE_LABEL, NAPCAT_LABEL] {
-        let plist = launch_agents_dir()?.join(format!("{label}.plist"));
-        if plist.exists() {
-            std::fs::remove_file(&plist)?;
-        }
+    super::service_uninstall(BRIDGE_LABEL)?;
+    let launcher = super::bridge_launchers_dir(paths)?.join("napcat-bridge.cmd");
+    if launcher.exists() {
+        std::fs::remove_file(&launcher)?;
     }
-    println!("✅ 已移除 NapCat 桥接与本体自启动（配置与数据保留）");
+    println!("✅ 已移除 NapCat 桥接自启动（配置与数据保留）");
     Ok(())
 }
 
@@ -243,35 +208,4 @@ fn run_config(paths: &GqyPaths, key: &str, value: &str) -> Result<()> {
     super::save(paths, &bridges)?;
     println!("napcat.{key} = {value}");
     Ok(())
-}
-
-fn bridge_plist(paths: &GqyPaths, config: &NapcatConfig, script: &Path) -> Result<serde_json::Value> {
-    let log = super::bridge_log_path(paths, "napcat");
-    Ok(json!({
-        "Label": BRIDGE_LABEL,
-        "ProgramArguments": [
-            config.bin,
-            script.to_str().unwrap_or_default(),
-        ],
-        "EnvironmentVariables": {
-            "HOME": env_home().to_str().unwrap_or_default(),
-            "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
-            "HILIA_HOME": paths.home_hint(),
-            "HILIA_WS_URL": config.ws_url,
-            "HILIA_SELF_ID": config.self_id,
-            "HILIA_BIN": paths.bin_hint(),
-            "HILIA_BRIDGE_LOG": log.to_str().unwrap_or_default(),
-        },
-        "RunAtLoad": true,
-        "KeepAlive": true,
-        "StandardOutPath": log.to_str().unwrap_or_default(),
-        "StandardErrorPath": log.to_str().unwrap_or_default(),
-    }))
-}
-
-fn launch_agents_dir() -> Result<PathBuf> {
-    let home = env_home();
-    let dir = home.join("Library/LaunchAgents");
-    std::fs::create_dir_all(&dir).context("creating LaunchAgents directory")?;
-    Ok(dir)
 }

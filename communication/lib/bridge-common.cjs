@@ -1,15 +1,18 @@
 #!/usr/bin/env node
 /**
- * GQY 桥接层公共模块：askGqy / 会话隔离 / 输出清理 / 回复分片 / 会话串行队列。
- * 供 napcat/bridge.cjs 与 tg/bridge.cjs 共用，避免两份代码漂移。
+ * 希尔娅 桥接层公共模块：askGqy / 会话隔离 / 输出清理 / 回复分片 / 会话串行队列。
+ * 供 napcat / wecom / feishu 的 bridge.cjs 共用，避免多份代码漂移。
  *
  * 会话隔离约定：
- *  - 每个隔离会话一个独立 GQY_HOME（conversation.db / memory.db 互不串扰）；
- *  - 同一会话的消息经串行队列逐个处理，杜绝并发 gqy 进程争抢同一个数据库
+ *  - 每个隔离会话一个独立 HILIA_HOME（conversation.db / memory.db 互不串扰）；
+ *  - 同一会话的消息经串行队列逐个处理，杜绝并发 hilia 进程争抢同一个数据库
  *    导致的上下文互相覆盖与回复乱序；
  *  - 会话配置复制自主配置，但 api_key/token/password 等敏感字段会被替换为
- *    `$env:GQY_BRIDGE_KEY_n` 引用（GQY 原生支持 $env 引用），真实密钥只经
+ *    `$env:HILIA_BRIDGE_KEY_n` 引用（hilia 原生支持 $env 引用），真实密钥只经
  *    进程环境注入，会话目录里不留明文。
+ *
+ * 身份上下文：askGqy 会带上 --bridge-platform/--bridge-user-id/--bridge-chat-id，
+ * 学分等权限工具据此判断提问者是辅导员（管理员）还是学生。
  */
 'use strict';
 
@@ -17,11 +20,14 @@ const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const HOME = process.env.HOME || '';
-const GQY_BIN = process.env.GQY_BIN || '/opt/homebrew/bin/gqy';
-const GQY_TIMEOUT_MS = Number(process.env.GQY_TIMEOUT_MS || 120000);
-const SESSIONS_DIR = process.env.GQY_SESSIONS_DIR || path.join(HOME, 'Library/Application Support/gqy/sessions');
-const MAIN_CONFIG = process.env.GQY_MAIN_CONFIG || path.join(HOME, 'Library/Application Support/gqy/config.jsonc');
+const HOME = process.env.USERPROFILE || process.env.HOME || '';
+const HILIA_BIN = process.env.HILIA_BIN || 'hilia';
+const HILIA_TIMEOUT_MS = Number(process.env.HILIA_TIMEOUT_MS || 120000);
+const SESSIONS_DIR =
+  process.env.HILIA_SESSIONS_DIR ||
+  path.join(HOME, 'AppData/Local/hilia/sessions');
+const MAIN_CONFIG =
+  process.env.HILIA_MAIN_CONFIG || path.join(HOME, 'AppData/Local/hilia/config.jsonc');
 
 // 主配置中需要替换为 $env 引用的敏感字段
 const KEY_FIELD_RE = /(api_?key|token|password|secret|credential)/i;
@@ -32,7 +38,7 @@ function log(logFile, ...args) {
   process.stdout.write(line + '\n');
 }
 
-// 清理 gqy ask 输出的 ANSI 转义码和状态行
+// 清理 hilia ask 输出的 ANSI 转义码和状态行
 function cleanOutput(raw) {
   return raw
     .replace(/\u001b\[[0-9;?]*[a-zA-Z]/g, '')
@@ -88,7 +94,7 @@ function redactKeysToEnv(node, envMap, counter) {
       const value = node[key];
       if (KEY_FIELD_RE.test(key) && typeof value === 'string') {
         if (!value.startsWith('$env:')) {
-          const envName = `GQY_BRIDGE_KEY_${counter.n++}`;
+          const envName = `HILIA_BRIDGE_KEY_${counter.n++}`;
           envMap[envName] = value;
           node[key] = `$env:${envName}`;
         }
@@ -132,16 +138,23 @@ function ensureSession(sessionHome, logFile) {
   return envMap;
 }
 
-/** 调用 gqy ask；会话密钥经 extraEnv 注入，避免子进程环境里出现明文 */
-function askGqy(question, sessionHome, extraEnv, logFile) {
+/** 调用 hilia ask；会话密钥经 extraEnv 注入，避免子进程环境里出现明文 */
+function askGqy(question, sessionHome, extraEnv, logFile, identity) {
   return new Promise((resolve) => {
     const started = Date.now();
     log(logFile, `ask 开始: ${question.slice(0, 60)}`);
-    const child = spawn(GQY_BIN, ['--stdout', 'ask', question], {
+    const args = ['--stdout'];
+    if (identity) {
+      if (identity.platform) args.push('--bridge-platform', identity.platform);
+      if (identity.userId) args.push('--bridge-user-id', identity.userId);
+      if (identity.chatId) args.push('--bridge-chat-id', identity.chatId);
+    }
+    args.push('ask', question);
+    const child = spawn(HILIA_BIN, args, {
       env: {
         ...process.env,
         NO_COLOR: '1',
-        ...(sessionHome ? { GQY_HOME: sessionHome } : {}),
+        ...(sessionHome ? { HILIA_HOME: sessionHome } : {}),
         ...(extraEnv || {}),
       },
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -154,10 +167,10 @@ function askGqy(question, sessionHome, extraEnv, logFile) {
 
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill('SIGKILL');
-      log(logFile, `ask 超时 (${GQY_TIMEOUT_MS / 1000}s) 已终止`);
-      resolve(`处理超时了（${GQY_TIMEOUT_MS / 1000}s），换个问法试试？`);
-    }, GQY_TIMEOUT_MS);
+      try { child.kill('SIGKILL'); } catch (_) { child.kill(); }
+      log(logFile, `ask 超时 (${HILIA_TIMEOUT_MS / 1000}s) 已终止`);
+      resolve(`处理超时了（${HILIA_TIMEOUT_MS / 1000}s），换个问法试试？`);
+    }, HILIA_TIMEOUT_MS);
 
     child.on('error', (e) => {
       clearTimeout(timer);
@@ -183,7 +196,7 @@ function askGqy(question, sessionHome, extraEnv, logFile) {
 
 /**
  * 长回复按平台限制分片（emoji/中文按码元切分，避免切断代理对）。
- * Telegram 单条上限 4096 字符；QQ 群/私聊更宽松，统一用 4000 保守切分。
+ * 飞书单条上限 4096 字符；QQ/企业微信更宽松，统一用 4000 保守切分。
  */
 function splitReply(text, limit = 4000) {
   if (!text) return [];

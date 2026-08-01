@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 /**
- * GQY OneBot 桥接层
- * 连接 NapCat WebSocket 3001，把 QQ 消息路由到 gqy ask，回复再吐回 QQ
+ * 希尔娅 OneBot 桥接层
+ * 连接 NapCat WebSocket 3001，把 QQ 消息路由到 hilia ask，回复再吐回 QQ
  *
  * 规则：
  *  - 私聊：全部响应，按 QQ 号隔离会话
  *  - 群聊：只在被 @（或 @全体）时响应，按群号隔离会话
  *  - 同一会话的消息串行处理（见 lib/bridge-common.cjs）
  *  - 处理中忽略重复消息（简单去抖）
+ *  - 身份上下文：--bridge-platform qq --bridge-user-id <QQ号> --bridge-chat-id <群号或私聊QQ号>
  */
 'use strict';
 
@@ -21,13 +22,13 @@ const {
   enqueueSession,
 } = require('../lib/bridge-common.cjs');
 
-const WS_URL = process.env.GQY_WS_URL || 'ws://127.0.0.1:3001';
-const LOG_FILE = process.env.GQY_BRIDGE_LOG || path.join(process.env.HOME || '', 'napcat', 'bridge.log');
+const WS_URL = process.env.HILIA_WS_URL || 'ws://127.0.0.1:3001';
+const LOG_FILE = process.env.HILIA_BRIDGE_LOG || path.join(process.env.USERPROFILE || process.env.HOME || '', 'hilia', 'napcat-bridge.log');
 // 我的 QQ 号：未设置时群聊 @ 响应不可用（启动时给出警告）
-const SELF_ID = process.env.GQY_SELF_ID || '';
+const SELF_ID = process.env.HILIA_SELF_ID || '';
 
 if (!SELF_ID) {
-  log(LOG_FILE, '警告：未设置 GQY_SELF_ID，群聊 @ 响应将不可用（私聊不受影响）');
+  log(LOG_FILE, '警告：未设置 HILIA_SELF_ID，群聊 @ 响应将不可用（私聊不受影响）');
 }
 
 // 从 OneBot array 消息段提取文本 + 记录是否有 @ 我
@@ -83,13 +84,19 @@ async function handleMessage(event) {
     ? `qq-group-${group_id}`
     : `qq-private-${user_id}`;
   const sessionHome = path.join(SESSIONS_DIR, sessionKey);
+  // 身份上下文：平台 = qq；chatId 私聊用 QQ 号、群聊用群号
+  const identity = {
+    platform: 'qq',
+    userId: String(user_id),
+    chatId: String(message_type === 'group' ? group_id : user_id),
+  };
 
   try {
     log(LOG_FILE, `收到 ${message_type} 来自 ${user_id}${group_id ? ' 群 ' + group_id : ''}: ${text.slice(0, 120)}`);
-    // 串行处理：同一会话的消息排队，避免并发 gqy 进程竞态与回复乱序
+    // 串行处理：同一会话的消息排队，避免并发 hilia 进程竞态与回复乱序
     const reply = await enqueueSession(sessionKey, async () => {
       const extraEnv = ensureSession(sessionHome, LOG_FILE);
-      return askGqy(text.slice(0, 2000), sessionHome, extraEnv, LOG_FILE);
+      return askGqy(text.slice(0, 2000), sessionHome, extraEnv, LOG_FILE, identity);
     });
     const send = {
       action: message_type === 'group' ? 'send_group_msg' : 'send_private_msg',

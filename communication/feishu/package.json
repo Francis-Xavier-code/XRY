@@ -1,0 +1,10 @@
+{
+  "name": "hilia-feishu-bridge",
+  "version": "0.6.0",
+  "private": true,
+  "description": "希尔娅 飞书桥接（长连接模式）",
+  "main": "bridge.cjs",
+  "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.24.0"
+  }
+}

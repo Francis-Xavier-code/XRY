@@ -2,8 +2,9 @@ use crate::agent::{
     archive_and_delete_visible_turns, Agent, AgentEvent, AgentMode, AgentTurnControl,
 };
 use crate::backup::{BackupInitOptions, BackupOutcome, RestoreOptions};
+use crate::bridges::feishu::FeishuArgs;
 use crate::bridges::napcat::NapcatArgs;
-use crate::bridges::tg::TgArgs;
+use crate::bridges::wecom::WecomArgs;
 use crate::config::{ActiveProviderModelConfig, AppConfig};
 use crate::i18n::{is_zh, text as t};
 use crate::llm::{ChatStreamChunk, OpenAiCompatibleClient, ThinkingVariantOptions};
@@ -307,6 +308,17 @@ pub struct Cli {
 
     #[arg(long, hide = true)]
     pub clipboard_paste: bool,
+
+    // ── 桥接身份上下文（由 communication/*/bridge.cjs 传入）──
+    // 平台标识：qq / wecom / feishu；用户 ID 与聊天 ID 用于学分权限判定
+    #[arg(long, hide = true)]
+    pub bridge_platform: Option<String>,
+
+    #[arg(long, hide = true)]
+    pub bridge_user_id: Option<String>,
+
+    #[arg(long, hide = true)]
+    pub bridge_chat_id: Option<String>,
 
     #[command(subcommand)]
     pub command: Option<Command>,
@@ -845,7 +857,8 @@ pub enum Command {
     Tts(TtsArgs),
     Stt(SttArgs),
     Napcat(NapcatArgs),
-    Tg(TgArgs),
+    Wecom(WecomArgs),
+    Feishu(FeishuArgs),
 }
 
 #[derive(Debug, Args)]
@@ -1307,6 +1320,15 @@ pub struct ConfigGetArgs {
 }
 
 pub async fn run(cli: Cli, paths: GqyPaths) -> Result<()> {
+    // 桥接身份：QQ/企业微信/飞书 消息由 bridge.cjs 传入，供学分等权限工具判定
+    if cli.bridge_platform.is_some() || cli.bridge_user_id.is_some() {
+        crate::bridges::set_identity(crate::bridges::BridgeIdentity {
+            platform: cli.bridge_platform.clone().unwrap_or_default(),
+            user_id: cli.bridge_user_id.clone().unwrap_or_default(),
+            chat_id: cli.bridge_chat_id.clone().unwrap_or_default(),
+        });
+    }
+
     if cli.shell_classify {
         let shell_name = cli.shell.as_deref().unwrap_or("fish");
         let message = shell_message_from_input(cli.stdin, cli.message)?;
@@ -1416,7 +1438,8 @@ pub async fn run(cli: Cli, paths: GqyPaths) -> Result<()> {
         Some(Command::Web(args)) => crate::web::run(paths, args).await,
         Some(Command::Balance) => run_balance(&paths),
         Some(Command::Napcat(args)) => crate::bridges::napcat::run(&paths, args).await,
-        Some(Command::Tg(args)) => crate::bridges::tg::run(&paths, args).await,
+        Some(Command::Wecom(args)) => crate::bridges::wecom::run(&paths, args).await,
+        Some(Command::Feishu(args)) => crate::bridges::feishu::run(&paths, args).await,
         None => {
             let message = join_message(cli.message);
             if message.is_empty() && io::stdin().is_terminal() {
