@@ -250,7 +250,8 @@ fn data_home() -> std::path::PathBuf {
 fn check_for_update() {
     let exe = hilia_exe();
     let ps = format!(
-        "Add-Type -AssemblyName System.Windows.Forms;          $out = & '{exe}' update check 2>&1 | Out-String;          [System.Windows.Forms.MessageBox]::Show($out, '希尔娅 更新检查')"
+        "Add-Type -AssemblyName System.Windows.Forms;          $out = & '{}' update check 2>&1 | Out-String;          [System.Windows.Forms.MessageBox]::Show($out, '希尔娅 更新检查')",
+        exe.display()
     );
     let _ = Command::new("powershell")
         .args(["-NoProfile", "-NonInteractive", "-Command", &ps])
@@ -342,7 +343,7 @@ fn try_lock_single_instance() -> bool {
     unsafe {
         use windows_sys::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
         use windows_sys::Win32::System::Threading::CreateMutexW;
-        let mutex = CreateMutexW(std::ptr::null(), false, wide("Local\\hilia-tray-mutex").as_ptr());
+        let mutex = CreateMutexW(std::ptr::null(), 0, wide("Local\\hilia-tray-mutex").as_ptr());
         if mutex.is_null() {
             return true;
         }
@@ -354,6 +355,14 @@ fn try_lock_single_instance() -> bool {
 
 impl ApplicationHandler<TrayEvent> for TrayApp {
     fn resumed(&mut self, _event_loop: &ActiveEventLoop) {}
+
+    fn window_event(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        _window_id: winit::window::WindowId,
+        _event: winit::event::WindowEvent,
+    ) {
+    }
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: TrayEvent) {
         self.on_event(event);
@@ -367,19 +376,21 @@ fn main() {
         std::process::exit(0);
     }
 
-    let event_loop = EventLoop::<TrayEvent>::new().expect("create event loop");
+    let event_loop = EventLoop::<TrayEvent>::with_user_event()
+        .build()
+        .expect("create event loop");
     event_loop.set_control_flow(ControlFlow::Wait);
     let proxy = event_loop.create_proxy();
 
     // 托盘菜单事件 → 事件循环
-    MenuEvent::set_event_handler(Some(Box::new(move |event| {
+    MenuEvent::set_event_handler(Some(Box::new(move |event: tray_icon::menu::MenuEvent| {
         let _ = proxy.send_event(TrayEvent::Menu(event.id.clone()));
     })));
 
     // 全局快捷键 Alt+G（迷你）/ Alt+H（面板）
     let hotkey_manager = GlobalHotKeyManager::new().expect("create hotkey manager");
-    let _ = hotkey_manager.register(HotKey::new(Some(Modifiers::ALT), Code::KeyH).expect("alt+h"));
-    let _ = hotkey_manager.register(HotKey::new(Some(Modifiers::ALT), Code::KeyG).expect("alt+g"));
+    let _ = hotkey_manager.register(HotKey::new(Some(Modifiers::ALT), Code::KeyH));
+    let _ = hotkey_manager.register(HotKey::new(Some(Modifiers::ALT), Code::KeyG));
     let hotkey_proxy = event_loop.create_proxy();
     GlobalHotKeyEvent::set_event_handler(Some(Box::new(move |_event| {
         let _ = hotkey_proxy.send_event(TrayEvent::Hotkey);
