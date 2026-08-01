@@ -4527,7 +4527,7 @@
       });
       elements.miniExpandButton?.addEventListener("click", () => {
         try {
-          window.webkit.messageHandlers.gqyExpand.postMessage("expand");
+          window.open("/", "_blank");
         } catch (_) {
           // 浏览器环境（非 App）：直接去掉 mini 参数重载
           const url = new URL(location.href);

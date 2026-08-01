@@ -175,9 +175,9 @@ pub fn backup_now(paths: &GqyPaths, push: bool) -> Result<BackupOutcome> {
 /// 自动备份节流：距上次快照不足该秒数则跳过（`hilia backup now` 不受限）。
 const AUTO_BACKUP_MIN_INTERVAL_SECS: i64 = 30 * 60;
 
-/// 节流间隔（测试用环境变量可调，例如 `GQY_BACKUP_INTERVAL_SECS=0` 关闭节流）。
+/// 节流间隔（测试用环境变量可调，例如 `HILIA_BACKUP_INTERVAL_SECS=0` 关闭节流）。
 fn auto_backup_min_interval_secs() -> i64 {
-    std::env::var("GQY_BACKUP_INTERVAL_SECS")
+    std::env::var("HILIA_BACKUP_INTERVAL_SECS")
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(AUTO_BACKUP_MIN_INTERVAL_SECS)
@@ -1114,7 +1114,7 @@ mod tests {
         let home = root.path().join("home");
         let paths = test_paths(&home);
         std::env::set_var(HILIA_HOME_ENV, &home);
-        std::env::set_var("GQY_BACKUP_INTERVAL_SECS", "0");
+        std::env::set_var("HILIA_BACKUP_INTERVAL_SECS", "0");
 
         let options = BackupInitOptions {
             remote: None,
@@ -1168,7 +1168,7 @@ mod tests {
         assert!(outcome.committed);
 
         // 默认节流（30 分钟）：刚快照过就跳过
-        std::env::remove_var("GQY_BACKUP_INTERVAL_SECS");
+        std::env::remove_var("HILIA_BACKUP_INTERVAL_SECS");
         assert!(maybe_auto_backup(&paths).unwrap().is_none());
     }
 
@@ -1187,7 +1187,7 @@ mod tests {
         let home = root.path().join("home");
         let paths = test_paths(&home);
         std::env::set_var(HILIA_HOME_ENV, &home);
-        std::env::set_var("GQY_BACKUP_INTERVAL_SECS", "0");
+        std::env::set_var("HILIA_BACKUP_INTERVAL_SECS", "0");
         init(
             &paths,
             BackupInitOptions {

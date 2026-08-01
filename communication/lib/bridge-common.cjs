@@ -126,7 +126,7 @@ function ensureSession(sessionHome, logFile) {
   if (fs.existsSync(cfgPath)) return envMap; // 已初始化：主配置更新由 $env 引用自动跟随
 
   const main = readJsonc(MAIN_CONFIG);
-  if (!main) return envMap; // 无主配置：会话用 GQY 默认配置即可
+  if (!main) return envMap; // 无主配置：会话用希尔娅默认配置即可
   const counter = { n: 0 };
   redactKeysToEnv(main, envMap, counter);
   try {
@@ -223,7 +223,7 @@ function splitReply(text, limit = 4000) {
 
 /**
  * 会话串行队列：同一会话的消息逐个处理。
- * 避免同一 GQY_HOME 下并发 gqy 进程读写 conversation.db 的竞态与回复乱序。
+ * 避免同一 HILIA_HOME 下并发 hilia 进程读写 conversation.db 的竞态与回复乱序。
  */
 const sessionQueues = new Map();
 function enqueueSession(sessionKey, task) {

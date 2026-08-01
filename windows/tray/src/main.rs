@@ -335,7 +335,7 @@ fn try_lock_single_instance() -> bool {
 
 // ─────────────────────────── 入口 ───────────────────────────
 
-impl ApplicationHandler for TrayApp {
+impl ApplicationHandler<TrayEvent> for TrayApp {
     fn resumed(&mut self, _event_loop: &ActiveEventLoop) {}
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: TrayEvent) {

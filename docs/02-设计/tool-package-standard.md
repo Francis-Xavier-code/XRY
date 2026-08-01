@@ -1,6 +1,6 @@
 # 希尔娅 工具包标准（Tool Package Standard）
 
-> 目标：让「发个仓库给顾清影，她能 100% 兼容地转换成自己的工具，长期使用」这件事有章可循。
+> 目标：让「发个仓库给希尔娅，她能 100% 兼容地转换成自己的工具，长期使用」这件事有章可循。
 
 ## 一、工具包是什么
 
@@ -9,9 +9,9 @@
 随备份快照、换机恢复后依然在：
 
 ```zsh
-gqy tools import ./my-tools            # 本地目录
-gqy tools import https://github.com/xxx/gqy-tools-demo   # Git 仓库（自动克隆）
-gqy tools list                        # 查看已导入的工具包
+hilia tools import ./my-tools            # 本地目录
+hilia tools import https://github.com/xxx/hilia-tools-demo   # Git 仓库（自动克隆）
+hilia tools list                        # 查看已导入的工具包
 ```
 
 ## 二、两种形态（推荐清单，兜底自动扫描）
@@ -68,21 +68,21 @@ gqy tools list                        # 查看已导入的工具包
 
 ```zsh
 # 1. 先看候选：列出所有可执行脚本 + 头部摘要，判断哪些是核心功能
-gqy tools inspect https://github.com/xxx/tool-repo
+hilia tools inspect https://github.com/xxx/tool-repo
 
 # 2. 精准导入核心工具（构建/发布脚本不转）
-gqy tools import https://github.com/xxx/tool-repo --only download.sh,install.sh
+hilia tools import https://github.com/xxx/tool-repo --only download.sh,install.sh
 ```
 
-给顾清影的用法：把仓库链接发给她，让她先 `gqy tools inspect` + 读 README 判断核心功能，
-再 `gqy tools import ... --only` 导入，最后 `gqy tools list` 确认。她全程可自主完成。
+给希尔娅的用法：把仓库链接发给她，让她先 `hilia tools inspect` + 读 README 判断核心功能，
+再 `hilia tools import ... --only` 导入，最后 `hilia tools list` 确认。她全程可自主完成。
 
 ## 三、导入后的行为
 
 - 文件复制到 `希尔娅_HOME/config/scripts/<包名>/`，权限 755；
 - 生成 `index.json` 清单，**每轮对话自动扫描注册**，立刻可用；
 - 工具按 `load_policy` 懒加载：模型需要时用 `load_tools` 加载，或对话里让 希尔娅 加载；
-- 长期有效：随备份快照；`gqy backup restore` 换机恢复后重新 `gqy tools import <仓库>` 即可（推荐用 Git 仓库形态，天然可更新：再导入一次自动 `git pull`）。
+- 长期有效：随备份快照；`hilia backup restore` 换机恢复后重新 `hilia tools import <仓库>` 即可（推荐用 Git 仓库形态，天然可更新：再导入一次自动 `git pull`）。
 
 ## 四、给工具作者的要求
 
@@ -97,5 +97,5 @@ gqy tools import https://github.com/xxx/tool-repo --only download.sh,install.sh
 ## 五、让 希尔娅 自己导入
 
 对话里说「把我这个仓库转成你的工具」并把路径/URL 给她即可——她会执行
-`gqy tools import <url>` 完成导入（她能跑命令）。导入后让她 `gqy tools list`
+`hilia tools import <url>` 完成导入（她能跑命令）。导入后让她 `hilia tools list`
 确认工具列表，之后就能长期调用了。
