@@ -451,7 +451,12 @@ fn human_size(bytes: u64) -> String {
 mod tests {
     use super::*;
 
-    fn signed_update_json(version: &str) -> String {
+    /// 私钥从环境变量读取（CI 经 GitHub Secrets 注入）；未设置时跳过签名相关测试。
+    fn dev_secret() -> Option<String> {
+        std::env::var("HILIA_SIGN_KEY").ok().filter(|v| !v.trim().is_empty())
+    }
+
+    fn signed_update_json(version: &str, secret: &str) -> String {
         let mut info = UpdateInfo {
             version: version.to_string(),
             min_version: "0.5.0".to_string(),
@@ -467,7 +472,6 @@ mod tests {
             signature: String::new(),
         };
         let canonical = serde_json::to_vec(&info).unwrap();
-        let secret = "B6Z1uPI8qtF+WTnRyEeAGbUo/Yzr4NVeIPwFbfTrBC8=";
         info.signature = crate::security::sign_with_secret(&canonical, secret).unwrap();
         serde_json::to_string(&info).unwrap()
     }
@@ -484,7 +488,11 @@ mod tests {
 
     #[test]
     fn verifies_signed_update_json() {
-        let raw = signed_update_json("0.7.0");
+        let Some(secret) = dev_secret() else {
+            eprintln!("跳过：未设置 HILIA_SIGN_KEY");
+            return;
+        };
+        let raw = signed_update_json("0.7.0", &secret);
         let info = verify_update_json(&raw).unwrap();
         assert_eq!(info.version, "0.7.0");
         assert!(info.windows.is_some());
@@ -492,9 +500,12 @@ mod tests {
 
     #[test]
     fn rejects_unsigned_update_json() {
-        let mut raw = signed_update_json("0.7.0");
+        let Some(secret) = dev_secret() else {
+            eprintln!("跳过：未设置 HILIA_SIGN_KEY");
+            return;
+        };
+        let mut raw = signed_update_json("0.7.0", &secret);
         let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        // 去掉签名
         let mut obj = value.as_object().unwrap().clone();
         obj.remove("signature");
         raw = serde_json::to_string(&obj).unwrap();
@@ -504,7 +515,11 @@ mod tests {
 
     #[test]
     fn rejects_tampered_update_json() {
-        let raw = signed_update_json("0.7.0");
+        let Some(secret) = dev_secret() else {
+            eprintln!("跳过：未设置 HILIA_SIGN_KEY");
+            return;
+        };
+        let raw = signed_update_json("0.7.0", &secret);
         let mut value: serde_json::Value = serde_json::from_str(&raw).unwrap();
         value["version"] = serde_json::json!("9.9.9");
         let tampered = serde_json::to_string(&value).unwrap();
@@ -521,10 +536,8 @@ mod tests {
 
     #[test]
     fn rejects_zip_slip_paths() {
-        let temp = tempfile::tempdir().unwrap();
         let bad = Path::new("../../evil.txt");
         assert!(bad.components().any(|c| matches!(c, std::path::Component::ParentDir)));
-        let _ = temp;
     }
 
     #[test]

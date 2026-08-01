@@ -183,12 +183,19 @@ mod tests {
         (temp, paths)
     }
 
-    // 开发密钥对（与 src/security.rs 内置公钥配套）。生产部署必须整体替换密钥对。
-    const DEV_SECRET: &str = "B6Z1uPI8qtF+WTnRyEeAGbUo/Yzr4NVeIPwFbfTrBC8=";
+    /// 私钥从环境变量读取（GitHub Secrets 注入 CI；本地跑测试时手动设）。
+    /// 仓库中不存放任何私钥。未设置时相关测试跳过。
+    fn dev_secret() -> Option<String> {
+        std::env::var("HILIA_SIGN_KEY").ok().filter(|v| !v.trim().is_empty())
+    }
 
     #[test]
     fn activation_code_round_trip() {
-        let code = make_activation_code(DEV_SECRET, "pro", "张三", 0).unwrap();
+        let Some(secret) = dev_secret() else {
+            eprintln!("跳过：未设置 HILIA_SIGN_KEY");
+            return;
+        };
+        let code = make_activation_code(&secret, "pro", "张三", 0).unwrap();
         let payload = verify_activation_code(&code).unwrap();
         assert_eq!(payload.plan, "pro");
         assert_eq!(payload.user, "张三");
@@ -197,7 +204,11 @@ mod tests {
 
     #[test]
     fn rejects_tampered_code() {
-        let code = make_activation_code(DEV_SECRET, "pro", "张三", 0).unwrap();
+        let Some(secret) = dev_secret() else {
+            eprintln!("跳过：未设置 HILIA_SIGN_KEY");
+            return;
+        };
+        let code = make_activation_code(&secret, "pro", "张三", 0).unwrap();
         let mut parts: Vec<String> = code.split('.').map(str::to_string).collect();
         // 篡改 payload
         let payload = ActivationPayload { plan: "pro".into(), user: "李四".into(), expires_at: 0 };
@@ -208,15 +219,23 @@ mod tests {
 
     #[test]
     fn rejects_expired_code() {
+        let Some(secret) = dev_secret() else {
+            eprintln!("跳过：未设置 HILIA_SIGN_KEY");
+            return;
+        };
         let past = (Utc::now() - chrono::Duration::days(1)).timestamp();
-        let code = make_activation_code(DEV_SECRET, "pro", "张三", past).unwrap();
+        let code = make_activation_code(&secret, "pro", "张三", past).unwrap();
         assert!(verify_activation_code(&code).is_err());
     }
 
     #[test]
     fn activate_persists_and_gates_features() {
+        let Some(secret) = dev_secret() else {
+            eprintln!("跳过：未设置 HILIA_SIGN_KEY");
+            return;
+        };
         let (_temp, paths) = temp_config();
-        let code = make_activation_code(DEV_SECRET, "pro", "辅导员", 0).unwrap();
+        let code = make_activation_code(&secret, "pro", "辅导员", 0).unwrap();
         let payload = activate(&paths, &code).unwrap();
         assert_eq!(payload.plan, "pro");
 

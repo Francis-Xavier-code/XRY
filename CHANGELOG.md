@@ -21,7 +21,7 @@
   新增企业微信桥接（自建应用回调，需内网穿透）；新增飞书桥接（官方 SDK 长连接，无需公网）
 - Windows 系统托盘应用 windows/tray（面板/迷你/配置/备份/主目录/开机自启/开发者信息，
   Alt+G 迷你 / Alt+H 面板）
-- 面板/迷你窗口/终端横幅展示开发者 2101497063@qq.com
+- 面板/迷你窗口/终端横幅展示开发者 
 
 ### 平台适配
 - TTS/STT：Windows 走 PowerShell + System.Speech；本地视觉 OCR 走 WinRT（vision-ocr.ps1）

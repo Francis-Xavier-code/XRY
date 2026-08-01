@@ -19,13 +19,13 @@ use rand::rngs::OsRng;
 ///
 /// 注意：obfstr 宏返回临时值，只能内联使用（语句内立即消费）。
 pub fn builtin_public_key_b64() -> String {
-    obfstr::obfstring!("pCAOwDoEtx5tforl8PgtOci0TXhmZappnePblZA0c6c=")
+    obfstr::obfstring!("Jjxusr42ZtMByR5WdFVV945G16biLDzNTK5NFb376RI=")
 }
 
 /// 解析内置公钥。
 pub fn verifying_key() -> Result<VerifyingKey> {
     let raw = base64_decode(obfstr::obfstr!(
-        "pCAOwDoEtx5tforl8PgtOci0TXhmZappnePblZA0c6c="
+        "Jjxusr42ZtMByR5WdFVV945G16biLDzNTK5NFb376RI="
     ))?;
     if raw.len() != 32 {
         bail!("内置公钥长度错误（{}）", raw.len());
@@ -127,7 +127,7 @@ mod tests {
         let signature = sign_with_secret(message, &secret).unwrap();
         // 篡改消息 → 用同一签名验证应失败（用签名对应的公钥验证）
         let raw = base64_decode(obfstr::obfstr!(
-            "pCAOwDoEtx5tforl8PgtOci0TXhmZappnePblZA0c6c="
+            "Jjxusr42ZtMByR5WdFVV945G16biLDzNTK5NFb376RI="
         ))
         .unwrap();
         let mut bytes = [0u8; 32];
