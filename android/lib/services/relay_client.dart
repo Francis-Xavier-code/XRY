@@ -15,6 +15,14 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 enum RelayStatus { disconnected, connecting, paired, pairPending, rejected, error }
 
+/// 连接候选：URL + 认证消息。
+class _ConnTarget {
+  _ConnTarget(this.url, this.auth);
+
+  final String url;
+  final Map<String, dynamic> auth;
+}
+
 class RelayMessage {
   RelayMessage({required this.from, required this.body, this.msgId});
 
@@ -43,50 +51,138 @@ class RelayClient extends ChangeNotifier {
   String get desktopId => _desktopId;
   List<RelayMessage> get inbox => List.unmodifiable(_inbox);
 
-  /// 扫码配对：连接中继 + code 认证。
-  Future<void> pairWithCode(String relayUrl, String code) async {
+  /// 当前连接通道（direct = 局域网直连 Win 端；relay = 公网中继）。
+  String get channelName => _channelName;
+  String _channelName = 'relay';
+
+  /// 扫码配对：优先直连（同 WiFi），失败自动切公网中继。
+  Future<void> pairWithCode({
+    required String code,
+    String? relayUrl,
+    String? directUrl,
+    String? dcode,
+  }) async {
     _pairCode = code;
-    await _connect(relayUrl, auth: {'type': 'auth', 'code': code});
+    await _tryConnect([
+      if (directUrl != null && directUrl.isNotEmpty)
+        _ConnTarget(directUrl, {'type': 'auth', 'code': dcode ?? code}),
+      if (relayUrl != null && relayUrl.isNotEmpty)
+        _ConnTarget(relayUrl, {'type': 'auth', 'code': code}),
+    ]);
   }
 
-  /// 已配对重连：token 认证。
-  Future<void> connectWithToken(String relayUrl, String token) async {
-    await _connect(relayUrl, auth: {'type': 'auth', 'token': token});
+  /// 已配对重连：优先直连（断线重连时直连通常可用），失败切中继。
+  Future<void> connectWithToken(
+    String relayUrl,
+    String token, {
+    String? directUrl,
+  }) async {
+    await _tryConnect([
+      if (directUrl != null && directUrl.isNotEmpty)
+        _ConnTarget(directUrl, {'type': 'auth', 'token': token}),
+      if (relayUrl.isNotEmpty)
+        _ConnTarget(relayUrl, {'type': 'auth', 'token': token}),
+    ]);
   }
 
-  Future<void> _connect(String relayUrl, {required Map<String, dynamic> auth}) async {
+  Future<void> _tryConnect(List<_ConnTarget> targets) async {
+    if (targets.isEmpty) {
+      _status = RelayStatus.error;
+      _error = '没有可用的连接地址';
+      notifyListeners();
+      return;
+    }
+    for (final target in targets) {
+      if (await _connectOnce(target.url, auth: target.auth)) {
+        return;
+      }
+    }
+    _status = RelayStatus.error;
+    _error = '所有连接方式都失败了，请检查网络或重新扫码配对';
+    notifyListeners();
+  }
+
+  Future<bool> _connectOnce(
+    String relayUrl, {
+    required Map<String, dynamic> auth,
+  }) async {
     await disconnect();
     _status = RelayStatus.connecting;
     _error = '';
     notifyListeners();
-
-    final uri = Uri.parse(relayUrl);
-    final channel = WebSocketChannel.connect(uri);
-    _channel = channel;
-    channel.sink.add(jsonEncode(auth));
-
-    _subscription = channel.stream.listen(
-      (raw) => _onMessage(raw),
-      onError: (Object error) {
-        _status = RelayStatus.error;
-        _error = '连接错误：$error';
-        notifyListeners();
-      },
-      onDone: () {
-        if (_status != RelayStatus.paired && _status != RelayStatus.pairPending) {
-          _status = RelayStatus.disconnected;
+    try {
+      final uri = Uri.parse(relayUrl);
+      final channel = WebSocketChannel.connect(uri);
+      _channel = channel;
+      channel.sink.add(jsonEncode(auth));
+      final completer = Completer<bool>();
+      var settled = false;
+      _subscription = channel.stream.listen(
+        (raw) {
+          final type = _rawType(raw);
+          if (!settled &&
+              (type == 'auth_ok' ||
+                  type == 'pair_pending' ||
+                  type == 'auth_error' ||
+                  type == 'pair_result')) {
+            settled = true;
+            completer.complete(true);
+          }
+          _onMessage(raw);
+        },
+        onError: (Object error) {
+          if (!settled) {
+            settled = true;
+            completer.complete(false);
+          }
+          _status = RelayStatus.error;
+          _error = '连接错误：$error';
           notifyListeners();
+        },
+        onDone: () {
+          if (!settled) {
+            settled = true;
+            completer.complete(false);
+          }
+          if (_status != RelayStatus.paired &&
+              _status != RelayStatus.pairPending) {
+            _status = RelayStatus.disconnected;
+            notifyListeners();
+          }
+        },
+      );
+      _heartbeat?.cancel();
+      _heartbeat = Timer.periodic(const Duration(seconds: 30), (_) {
+        if (_channel != null) {
+          _channel!.sink.add(jsonEncode({'type': 'ping'}));
         }
-      },
-    );
-
-    // 心跳
-    _heartbeat?.cancel();
-    _heartbeat = Timer.periodic(const Duration(seconds: 30), (_) {
-      if (_channel != null) {
-        _channel!.sink.add(jsonEncode({'type': 'ping'}));
+      });
+      final ok = await completer.future
+          .timeout(const Duration(seconds: 6), onTimeout: () => false);
+      if (!ok) {
+        await disconnect();
+        return false;
       }
-    });
+      // 连接成功：标记通道名（局域网直连地址不含 127.0.0.1）
+      _channelName = relayUrl.startsWith('ws://') &&
+              !relayUrl.contains('127.0.0.1') &&
+              !relayUrl.contains('localhost')
+          ? 'direct'
+          : 'relay';
+      return true;
+    } catch (_) {
+      await disconnect();
+      return false;
+    }
+  }
+
+  String _rawType(dynamic raw) {
+    try {
+      final map = jsonDecode(raw as String) as Map<String, dynamic>;
+      return (map['type'] as String?) ?? '';
+    } catch (_) {
+      return '';
+    }
   }
 
   void _onMessage(dynamic raw) {
@@ -148,6 +244,18 @@ class RelayClient extends ChangeNotifier {
       'type': 'message',
       'to': _desktopId,
       'body': {'text': text},
+      'msg_id': msgId,
+    }));
+  }
+
+  /// 发送结构化消息（申报/审批/管理员确认等），Windows 端按 body.kind 分流。
+  void sendAction(String kind, Map<String, dynamic> payload) {
+    if (_channel == null || _desktopId.isEmpty) return;
+    final msgId = DateTime.now().microsecondsSinceEpoch.toString();
+    _channel!.sink.add(jsonEncode({
+      'type': 'message',
+      'to': _desktopId,
+      'body': {'kind': kind, ...payload},
       'msg_id': msgId,
     }));
   }

@@ -102,9 +102,20 @@ class _SettingsPageState extends State<SettingsPage> {
         plan: payload['plan'] as String? ?? '',
         expiresAt: expires,
       );
+      final plan = (payload['plan'] as String?) ?? '';
+      // 管理员（辅导员）激活码：向 Windows 端确认辅导员身份
+      final isAdminPlan = plan.contains('admin') || plan.contains('pro');
+      if (isAdminPlan) {
+        await widget.store.setAdminConfirmed(true);
+        widget.relay.sendAction('admin_auth', {'activation_code': code});
+      }
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('激活成功：${payload['plan']}')),
+        SnackBar(
+          content: Text(isAdminPlan
+              ? '激活成功：${payload['plan']}（辅导员模式已启用）'
+              : '激活成功：${payload['plan']}'),
+        ),
       );
       setState(() {});
     } catch (e) {
@@ -159,6 +170,10 @@ class _SettingsPageState extends State<SettingsPage> {
       RelayStatus.error => '错误：${widget.relay.error}',
       RelayStatus.disconnected => '未连接',
     };
+    final channelText = switch (widget.relay.channelName) {
+      'direct' => '局域网直连',
+      _ => '公网中继',
+    };
 
     return Scaffold(
       appBar: AppBar(title: const Text('设置')),
@@ -168,7 +183,8 @@ class _SettingsPageState extends State<SettingsPage> {
           ListTile(
             leading: const Icon(Icons.link),
             title: const Text('配对状态'),
-            subtitle: Text('设备：${store.deviceId.isEmpty ? '未配对' : store.deviceId}\n中继：$statusText'),
+            subtitle: Text(
+                '设备：${store.deviceId.isEmpty ? '未配对' : store.deviceId}\n通道：$channelText · $statusText'),
             trailing: TextButton(onPressed: _unpair, child: const Text('解除配对')),
           ),
           const Divider(),
@@ -178,6 +194,14 @@ class _SettingsPageState extends State<SettingsPage> {
             subtitle: Text(license.summary),
             trailing: TextButton(onPressed: _activate, child: const Text('激活')),
           ),
+          if (store.adminConfirmed) ...[
+            const Divider(),
+            const ListTile(
+              leading: Icon(Icons.admin_panel_settings),
+              title: Text('辅导员模式'),
+              subtitle: Text('已通过管理员激活码确认，可审批申报、让 AI 总结提交情况'),
+            ),
+          ],
           const Divider(),
           ListTile(
             leading: const Icon(Icons.update),

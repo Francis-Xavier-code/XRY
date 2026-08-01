@@ -18,6 +18,7 @@ class ScanPage extends StatefulWidget {
 
 class _ScanPageState extends State<ScanPage> {
   RelayClient? _relay;
+  PairQrPayload? _payload;
   String _statusText = '请扫描 Windows 面板上的配对二维码';
   bool _pairing = false;
 
@@ -38,8 +39,9 @@ class _ScanPageState extends State<ScanPage> {
       setState(() => _statusText = '不是希尔娅配对二维码');
       return;
     }
+    _payload = payload;
     _pairing = true;
-    setState(() => _statusText = '正在连接中继并等待辅导员确认…');
+    setState(() => _statusText = '正在连接并等待辅导员确认…');
 
     final relay = RelayClient();
     _relay = relay;
@@ -68,7 +70,12 @@ class _ScanPageState extends State<ScanPage> {
           break;
       }
     });
-    await relay.pairWithCode(payload.relay, payload.code);
+    await relay.pairWithCode(
+      code: payload.code,
+      relayUrl: payload.relay,
+      directUrl: payload.direct,
+      dcode: payload.dcode,
+    );
   }
 
   Future<void> _onPaired(RelayClient relay) async {
@@ -76,7 +83,8 @@ class _ScanPageState extends State<ScanPage> {
       token: relay.pendingToken ?? '',
       deviceId: relay.pendingDeviceId ?? '',
       desktopId: relay.desktopId,
-      relayUrl: '',
+      relayUrl: _payload?.relay ?? '',
+      directUrl: _payload?.direct ?? '',
     );
     if (!mounted) return;
     Navigator.of(context).pushReplacement(

@@ -1,8 +1,9 @@
-// 主页：底部导航（对话 / 学分 / 设置）。
+// 主页：底部导航（对话 / 学分 / 申报 / 设置）。
 
 import 'package:flutter/material.dart';
 import '../services/pairing_store.dart';
 import '../services/relay_client.dart';
+import 'apply_page.dart';
 import 'chat_page.dart';
 import 'credits_page.dart';
 import 'settings_page.dart';
@@ -26,8 +27,12 @@ class _HomePageState extends State<HomePage> {
     super.initState();
     _relay = widget.relay ?? RelayClient();
     if (widget.relay == null && widget.store.token.isNotEmpty) {
-      // 重连已配对会话
-      _relay.connectWithToken(widget.store.relayUrl, widget.store.token);
+      // 重连已配对会话（优先直连，失败切中继）
+      _relay.connectWithToken(
+        widget.store.relayUrl,
+        widget.store.token,
+        directUrl: widget.store.directUrl,
+      );
     }
   }
 
@@ -44,6 +49,7 @@ class _HomePageState extends State<HomePage> {
     final pages = [
       ChatPage(relay: _relay),
       CreditsPage(relay: _relay),
+      ApplyPage(relay: _relay, store: widget.store),
       SettingsPage(store: widget.store, relay: _relay),
     ];
     return Scaffold(
@@ -61,6 +67,11 @@ class _HomePageState extends State<HomePage> {
             icon: Icon(Icons.grade_outlined),
             selectedIcon: Icon(Icons.grade),
             label: '学分',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.assignment_outlined),
+            selectedIcon: Icon(Icons.assignment),
+            label: '申报',
           ),
           NavigationDestination(
             icon: Icon(Icons.settings_outlined),
