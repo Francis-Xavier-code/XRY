@@ -5052,6 +5052,23 @@ mod tests {
             assert_ne!(read, 0, "connection closed before request headers");
             request.push(byte[0]);
         }
+        // 读掉请求体：关闭连接时残留未读数据在 Windows 上会触发 RST，
+        // 导致客户端在发送阶段报 10054（macOS 因时序差异碰巧通过）。
+        if let Some(line) = String::from_utf8_lossy(&request)
+            .lines()
+            .find(|line| line.to_ascii_lowercase().starts_with("content-length:"))
+        {
+            if let Some(len) = line.split(':').nth(1).and_then(|s| s.trim().parse::<usize>().ok()) {
+                let mut remaining = len;
+                let mut buf = vec![0u8; 8192];
+                while remaining > 0 {
+                    let take = remaining.min(buf.len());
+                    let read = stream.read(&mut buf[..take]).await.unwrap();
+                    assert_ne!(read, 0, "connection closed before request body");
+                    remaining -= read;
+                }
+            }
+        }
     }
 
     async fn write_http_sse_response(stream: &mut tokio::net::TcpStream, body: &str) {

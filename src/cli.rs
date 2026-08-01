@@ -488,26 +488,6 @@ fn localize_subcommands(mut command: clap::Command) -> clap::Command {
             "View or switch thinking level",
             "查看或切换思考档位",
         ),
-        (
-            "fish-init",
-            "Integrate with fish so you can chat in natural language directly in the terminal",
-            "集成到 fish，集成后可在终端直接使用自然语言交流。",
-        ),
-        (
-            "bash-init",
-            "Integrate with bash so you can chat in natural language directly in the terminal",
-            "集成到 bash，集成后可在终端直接使用自然语言交流。",
-        ),
-        (
-            "zsh-init",
-            "Integrate with zsh so you can chat in natural language directly in the terminal",
-            "集成到 zsh，集成后可在终端直接使用自然语言交流。",
-        ),
-        (
-            "remove-shell-hook",
-            "Safely remove installed Hilia shell hooks",
-            "安全删除已安装的希尔娅 shell hook",
-        ),
         ("history", "Show conversation history", "显示会话历史"),
         (
             "pop",
@@ -535,6 +515,34 @@ fn localize_subcommands(mut command: clap::Command) -> clap::Command {
     ];
     for (name, en, zh) in descriptions {
         command = command.mut_subcommand(name, |subcommand| subcommand.about(t(en, zh)));
+    }
+    #[cfg(unix)]
+    {
+        let shell_descriptions = [
+            (
+                "fish-init",
+                "Integrate with fish so you can chat in natural language directly in the terminal",
+                "集成到 fish，集成后可在终端直接使用自然语言交流。",
+            ),
+            (
+                "bash-init",
+                "Integrate with bash so you can chat in natural language directly in the terminal",
+                "集成到 bash，集成后可在终端直接使用自然语言交流。",
+            ),
+            (
+                "zsh-init",
+                "Integrate with zsh so you can chat in natural language directly in the terminal",
+                "集成到 zsh，集成后可在终端直接使用自然语言交流。",
+            ),
+            (
+                "remove-shell-hook",
+                "Safely remove installed Hilia shell hooks",
+                "安全删除已安装的希尔娅 shell hook",
+            ),
+        ];
+        for (name, en, zh) in shell_descriptions {
+            command = command.mut_subcommand(name, |subcommand| subcommand.about(t(en, zh)));
+        }
     }
     command = command
         .mut_subcommand("ask", localize_ask_command)

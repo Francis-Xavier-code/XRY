@@ -282,10 +282,25 @@ pub fn stop_process(pid: u32) -> Result<()> {
             bail!("failed to stop alarm process {pid}")
         }
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
-        let _ = pid;
-        bail!("alarm cancellation is not supported on this platform")
+        unsafe {
+            use windows_sys::Win32::System::Threading::{
+                OpenProcess, TerminateProcess, PROCESS_TERMINATE,
+            };
+            let handle = OpenProcess(PROCESS_TERMINATE, 0, pid);
+            if handle.is_null() {
+                if !process_exists(pid) {
+                    return Ok(());
+                }
+                bail!("failed to open alarm process {pid}")
+            }
+            let ok = TerminateProcess(handle, 1);
+            windows_sys::Win32::Foundation::CloseHandle(handle);
+            if ok == 0 && process_exists(pid) {
+                bail!("failed to stop alarm process {pid}")
+            }
+        }
     }
     Ok(())
 }
@@ -295,10 +310,21 @@ pub fn process_exists(pid: u32) -> bool {
     {
         unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
-        let _ = pid;
-        true
+        unsafe {
+            use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_INVALID_PARAMETER};
+            use windows_sys::Win32::Storage::FileSystem::SYNCHRONIZE;
+            use windows_sys::Win32::System::Threading::{OpenProcess, WaitForSingleObject};
+            let handle = OpenProcess(SYNCHRONIZE, 0, pid);
+            if handle.is_null() {
+                // 仅 PID 无效（进程已退出）才算不存在；权限不足说明进程仍在
+                return GetLastError() != ERROR_INVALID_PARAMETER;
+            }
+            let status = WaitForSingleObject(handle, 0);
+            CloseHandle(handle);
+            status == windows_sys::Win32::Foundation::WAIT_TIMEOUT
+        }
     }
 }
 
