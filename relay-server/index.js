@@ -37,7 +37,7 @@ const PORT = Number(process.env.PORT || 8787);
 const PAIR_TTL_MS = 5 * 60 * 1000;
 const HEARTBEAT_TIMEOUT_MS = 90 * 1000;
 const MAX_OFFLINE_MESSAGES = 100;
-const MAX_MESSAGE_BYTES = 64 * 1024;
+const MAX_MESSAGE_BYTES = 8 * 1024 * 1024; // 8MB：支持 APK 证据照片（base64）
 const RATE_LIMIT_PER_SEC = 10;
 
 // ─────────────────────────── 状态 ───────────────────────────

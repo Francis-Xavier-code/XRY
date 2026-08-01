@@ -19,7 +19,8 @@ pub use conversation_db::{
     QueuedPrompt, QueuedPromptAttachment, Turn, TurnFollowup, TurnStatus,
 };
 pub use credits_db::{
-    ClassRow, CreditRecordRow, CreditSummary, CreditTypeRow, CreditsDb, StudentRow,
+    ClassRow, CreditRecordRow, CreditSummary, CreditTypeRow, CreditsDb, RoleRow, StudentRow,
+    SubmissionRow, SubmissionSummaryRow,
 };
 pub use usage::UsageSnapshot;
 

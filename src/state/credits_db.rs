@@ -72,6 +72,53 @@ pub struct CreditSummary {
     pub total: f64,
 }
 
+/// 班级职位（班长/学委/团支书…，绑定学生 + 班级）。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RoleRow {
+    pub id: i64,
+    pub class_id: i64,
+    pub class_name: String,
+    pub title: String,
+    pub student_id: Option<i64>,
+    pub student_no: Option<String>,
+    pub student_name: Option<String>,
+    pub note: String,
+    pub created_at: String,
+}
+
+/// 学分申报（APK 问卷提交，导员审批）。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SubmissionRow {
+    pub id: i64,
+    pub student_id: i64,
+    pub student_no: String,
+    pub student_name: String,
+    pub class_id: Option<i64>,
+    pub class_name: Option<String>,
+    pub type_id: Option<i64>,
+    pub type_name: Option<String>,
+    pub points: f64,
+    pub description: String,
+    pub evidence: String,
+    pub status: String,
+    pub device_id: String,
+    pub review_note: String,
+    pub reviewed_at: String,
+    pub created_at: String,
+}
+
+/// 申报统计（按班级/类型聚合，供 AI 总结与面板展示）。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SubmissionSummaryRow {
+    pub class_id: Option<i64>,
+    pub class_name: Option<String>,
+    pub type_name: Option<String>,
+    pub pending: i64,
+    pub approved: i64,
+    pub rejected: i64,
+    pub total_points: f64,
+}
+
 pub struct CreditsDb {
     conn: Mutex<Connection>,
 }
@@ -796,8 +843,60 @@ fn init_schema(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_records_student ON credit_records(student_id);
         CREATE INDEX IF NOT EXISTS idx_records_type ON credit_records(type_id);
         CREATE INDEX IF NOT EXISTS idx_records_semester ON credit_records(semester);
+        -- APK 问卷申报（导员审批后生效）
+        CREATE TABLE IF NOT EXISTS credit_submissions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+            class_id INTEGER REFERENCES classes(id) ON DELETE SET NULL,
+            type_id INTEGER REFERENCES credit_types(id) ON DELETE SET NULL,
+            points REAL NOT NULL,
+            description TEXT DEFAULT '',
+            evidence TEXT DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'pending',
+            device_id TEXT DEFAULT '',
+            review_note TEXT DEFAULT '',
+            reviewed_at TEXT DEFAULT '',
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_submissions_status ON credit_submissions(status);
+        CREATE INDEX IF NOT EXISTS idx_submissions_student ON credit_submissions(student_id);
+        CREATE INDEX IF NOT EXISTS idx_submissions_created ON credit_submissions(created_at);
+        -- 班级职位（班长/学委等，绑定学生 + 班级）
+        CREATE TABLE IF NOT EXISTS roles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            class_id INTEGER NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+            title TEXT NOT NULL,
+            student_id INTEGER REFERENCES students(id) ON DELETE SET NULL,
+            note TEXT DEFAULT '',
+            created_at TEXT NOT NULL,
+            UNIQUE(class_id, title)
+        );
+        -- 辅导员设备（APK 用管理员激活码确认后登记）
+        CREATE TABLE IF NOT EXISTS admin_devices (
+            device_id TEXT PRIMARY KEY,
+            plan TEXT DEFAULT 'admin',
+            user_label TEXT DEFAULT '',
+            expires_at TEXT DEFAULT '',
+            confirmed_at TEXT NOT NULL
+        );
         ",
     )?;
+    // 迁移：students 增加 APK 设备 ID 列（用于学生自助绑定）
+    let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    if version < 1 {
+        let has_apk_id: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('students') WHERE name = 'apk_id'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )? > 0;
+        if !has_apk_id {
+            conn.execute_batch(
+                "ALTER TABLE students ADD COLUMN apk_id TEXT DEFAULT '';",
+            )?;
+        }
+        conn.pragma_update(None, "user_version", 1)?;
+    }
     Ok(())
 }
 
@@ -882,6 +981,446 @@ fn record_row_mapper(row: &rusqlite::Row) -> rusqlite::Result<CreditRecordRow> {
         operator: row.get(11)?,
         created_at: row.get(12)?,
     })
+}
+
+// ─────────────────────────── APK 对接（设备绑定 / 职位 / 申报审批） ───────────────────────────
+
+impl CreditsDb {
+    // ── APK 设备绑定（学生自助：扫码连接后绑定 学号+姓名） ──
+
+    pub fn find_student_by_apk(&self, apk_id: &str) -> Result<Option<StudentRow>> {
+        if apk_id.trim().is_empty() {
+            return Ok(None);
+        }
+        let conn = self.conn.lock().unwrap();
+        query_student_row(&conn, "WHERE s.apk_id = ?1", params![apk_id.trim()])
+    }
+
+    pub fn bind_student_apk(&self, student_id: i64, apk_id: &str) -> Result<()> {
+        let apk_id = apk_id.trim();
+        if apk_id.is_empty() {
+            bail!("APK 设备 ID 不能为空");
+        }
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE students SET apk_id = ?1 WHERE id = ?2",
+            params![apk_id, student_id],
+        )?;
+        Ok(())
+    }
+
+    // ── 班级职位（导员创建：班长/学委/团支书…绑定学生） ──
+
+    pub fn role_add(
+        &self,
+        class_id: i64,
+        title: &str,
+        student_id: Option<i64>,
+        note: &str,
+    ) -> Result<i64> {
+        let title = title.trim();
+        if title.is_empty() {
+            bail!("职位名称不能为空");
+        }
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO roles (class_id, title, student_id, note, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![class_id, title, student_id, note.trim(), now()],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn role_update(
+        &self,
+        id: i64,
+        title: Option<&str>,
+        student_id: Option<Option<i64>>,
+        note: Option<&str>,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let mut sets: Vec<String> = Vec::new();
+        let mut values: Vec<rusqlite::types::Value> = Vec::new();
+        if let Some(v) = title {
+            let v = v.trim();
+            if v.is_empty() {
+                bail!("职位名称不能为空");
+            }
+            sets.push("title = ?".into());
+            values.push(text_value(v));
+        }
+        if let Some(v) = student_id {
+            sets.push("student_id = ?".into());
+            values.push(match v {
+                Some(id) => rusqlite::types::Value::Integer(id),
+                None => rusqlite::types::Value::Null,
+            });
+        }
+        if let Some(v) = note {
+            sets.push("note = ?".into());
+            values.push(text_value(v.trim()));
+        }
+        if sets.is_empty() {
+            return Ok(());
+        }
+        values.push(rusqlite::types::Value::Integer(id));
+        let sql = format!("UPDATE roles SET {} WHERE id = ?", sets.join(", "));
+        conn.execute(&sql, rusqlite::params_from_iter(values))?;
+        Ok(())
+    }
+
+    pub fn role_delete(&self, id: i64) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM roles WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    pub fn list_roles(&self, class_id: Option<i64>) -> Result<Vec<RoleRow>> {
+        let conn = self.conn.lock().unwrap();
+        let mut sql = String::from(
+            "SELECT r.id, r.class_id, c.name AS class_name, r.title,
+                    r.student_id, s.student_no, s.name AS student_name,
+                    r.note, r.created_at
+             FROM roles r
+             LEFT JOIN classes c ON c.id = r.class_id
+             LEFT JOIN students s ON s.id = r.student_id",
+        );
+        let mut conds: Vec<String> = Vec::new();
+        let mut values: Vec<rusqlite::types::Value> = Vec::new();
+        if let Some(class_id) = class_id {
+            conds.push("r.class_id = ?".into());
+            values.push(rusqlite::types::Value::Integer(class_id));
+        }
+        if !conds.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&conds.join(" AND "));
+        }
+        sql.push_str(" ORDER BY r.id");
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(values), role_row_mapper)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// 按学生查职位（判断"职位人员"身份；同学生多职位取第一个）。
+    pub fn find_role_by_student(&self, student_id: i64) -> Result<Option<RoleRow>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT r.id, r.class_id, c.name AS class_name, r.title,
+                    r.student_id, s.student_no, s.name AS student_name,
+                    r.note, r.created_at
+             FROM roles r
+             LEFT JOIN classes c ON c.id = r.class_id
+             LEFT JOIN students s ON s.id = r.student_id
+             WHERE r.student_id = ?1
+             LIMIT 1",
+        )?;
+        let row = stmt
+            .query_row(params![student_id], role_row_mapper)
+            .optional()?;
+        Ok(row)
+    }
+
+    // ── 辅导员设备（APK 用管理员激活码确认身份） ──
+
+    pub fn is_admin_device(&self, device_id: &str) -> Result<bool> {
+        if device_id.trim().is_empty() {
+            return Ok(false);
+        }
+        let conn = self.conn.lock().unwrap();
+        let exists: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM admin_devices WHERE device_id = ?1)",
+                params![device_id.trim()],
+                |row| row.get(0),
+            )?;
+        if !exists {
+            return Ok(false);
+        }
+        let expires_at: String = conn
+            .query_row(
+                "SELECT expires_at FROM admin_devices WHERE device_id = ?1",
+                params![device_id.trim()],
+                |row| row.get(0),
+            )?;
+        if expires_at.is_empty() {
+            // 空 = 永久有效
+            return Ok(true);
+        }
+        match chrono::DateTime::parse_from_rfc3339(&expires_at) {
+            Ok(expires) => Ok(expires > chrono::Utc::now()),
+            Err(_) => Ok(false),
+        }
+    }
+
+    pub fn confirm_admin_device(
+        &self,
+        device_id: &str,
+        plan: &str,
+        user_label: &str,
+        expires_at: &str,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO admin_devices (device_id, plan, user_label, expires_at, confirmed_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![device_id.trim(), plan, user_label, expires_at, now()],
+        )?;
+        Ok(())
+    }
+
+    pub fn remove_admin_device(&self, device_id: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM admin_devices WHERE device_id = ?1",
+            params![device_id.trim()],
+        )?;
+        Ok(())
+    }
+
+    // ── 问卷申报（职位人员提交 → 导员审批 → 生效） ──
+
+    pub fn add_submission(
+        &self,
+        student_id: i64,
+        type_id: Option<i64>,
+        points: f64,
+        description: &str,
+        device_id: &str,
+    ) -> Result<i64> {
+        if points == 0.0 {
+            bail!("申报分值不能为 0");
+        }
+        let conn = self.conn.lock().unwrap();
+        let student = conn
+            .query_row(
+                "SELECT class_id FROM students WHERE id = ?1",
+                params![student_id],
+                |row| row.get::<_, Option<i64>>(0),
+            )
+            .optional()?
+            .ok_or_else(|| anyhow::anyhow!("学生不存在（id={student_id}）"))?;
+        conn.execute(
+            "INSERT INTO credit_submissions (student_id, class_id, type_id, points, description, device_id, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![student_id, student, type_id, points, description.trim(), device_id.trim(), now()],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn set_submission_evidence(&self, id: i64, evidence_json: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE credit_submissions SET evidence = ?1 WHERE id = ?2",
+            params![evidence_json, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn find_submission(&self, id: i64) -> Result<Option<SubmissionRow>> {
+        let conn = self.conn.lock().unwrap();
+        query_submission_row(&conn, "WHERE s.id = ?1", params![id])
+    }
+
+    pub fn list_submissions(
+        &self,
+        status: Option<&str>,
+        class_id: Option<i64>,
+        student_id: Option<i64>,
+        date_from: Option<&str>,
+        date_to: Option<&str>,
+    ) -> Result<Vec<SubmissionRow>> {
+        let conn = self.conn.lock().unwrap();
+        let mut sql = String::from(
+            "SELECT su.id, su.student_id, st.student_no, st.name AS student_name,
+                    su.class_id, c.name AS class_name, su.type_id, t.name AS type_name,
+                    su.points, su.description, su.evidence, su.status, su.device_id,
+                    su.review_note, su.reviewed_at, su.created_at
+             FROM credit_submissions su
+             LEFT JOIN students st ON st.id = su.student_id
+             LEFT JOIN classes c ON c.id = su.class_id
+             LEFT JOIN credit_types t ON t.id = su.type_id",
+        );
+        let mut conds: Vec<String> = Vec::new();
+        let mut values: Vec<rusqlite::types::Value> = Vec::new();
+        if let Some(status) = status {
+            conds.push("su.status = ?".into());
+            values.push(text_value(status.trim()));
+        }
+        if let Some(class_id) = class_id {
+            conds.push("su.class_id = ?".into());
+            values.push(rusqlite::types::Value::Integer(class_id));
+        }
+        if let Some(student_id) = student_id {
+            conds.push("su.student_id = ?".into());
+            values.push(rusqlite::types::Value::Integer(student_id));
+        }
+        if let Some(from) = date_from {
+            conds.push("su.created_at >= ?".into());
+            values.push(text_value(from));
+        }
+        if let Some(to) = date_to {
+            conds.push("su.created_at <= ?".into());
+            values.push(text_value(to));
+        }
+        if !conds.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&conds.join(" AND "));
+        }
+        sql.push_str(" ORDER BY su.id DESC");
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(values), submission_row_mapper)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// 导员通过申报：写入 credit_records（含类型上限校验）+ 更新状态。
+    pub fn approve_submission(&self, id: i64, review_note: &str, operator: &str) -> Result<()> {
+        let submission = self
+            .find_submission(id)?
+            .ok_or_else(|| anyhow::anyhow!("申报不存在（id={id}）"))?;
+        if submission.status == "approved" {
+            bail!("该申报已通过，请勿重复审批");
+        }
+        // 生效为学分记录（含该类型每人上限检查）
+        self.add_credit(
+            submission.student_id,
+            submission.type_id,
+            submission.points,
+            "",
+            "",
+            &format!("审批通过：{}", submission.description),
+            operator,
+        )?;
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE credit_submissions SET status = 'approved', review_note = ?1, reviewed_at = ?2 WHERE id = ?3",
+            params![review_note.trim(), now(), id],
+        )?;
+        Ok(())
+    }
+
+    pub fn reject_submission(&self, id: i64, review_note: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let updated = conn.execute(
+            "UPDATE credit_submissions SET status = 'rejected', review_note = ?1, reviewed_at = ?2 WHERE id = ?3 AND status = 'pending'",
+            params![review_note.trim(), now(), id],
+        )?;
+        if updated == 0 {
+            bail!("申报不存在或已审批");
+        }
+        Ok(())
+    }
+
+    /// 按班级/类型聚合申报统计（导员审批面板与 AI 总结用）。
+    pub fn submissions_summary(
+        &self,
+        date_from: Option<&str>,
+        date_to: Option<&str>,
+    ) -> Result<Vec<SubmissionSummaryRow>> {
+        let conn = self.conn.lock().unwrap();
+        let mut sql = String::from(
+            "SELECT su.class_id, c.name AS class_name, t.name AS type_name,
+                    SUM(CASE WHEN su.status = 'pending' THEN 1 ELSE 0 END) AS pending,
+                    SUM(CASE WHEN su.status = 'approved' THEN 1 ELSE 0 END) AS approved,
+                    SUM(CASE WHEN su.status = 'rejected' THEN 1 ELSE 0 END) AS rejected,
+                    COALESCE(SUM(CASE WHEN su.status = 'approved' THEN su.points ELSE 0 END), 0) AS total_points
+             FROM credit_submissions su
+             LEFT JOIN classes c ON c.id = su.class_id
+             LEFT JOIN credit_types t ON t.id = su.type_id",
+        );
+        let mut conds: Vec<String> = Vec::new();
+        let mut values: Vec<rusqlite::types::Value> = Vec::new();
+        if let Some(from) = date_from {
+            conds.push("su.created_at >= ?".into());
+            values.push(text_value(from));
+        }
+        if let Some(to) = date_to {
+            conds.push("su.created_at <= ?".into());
+            values.push(text_value(to));
+        }
+        if !conds.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&conds.join(" AND "));
+        }
+        sql.push_str(
+            " GROUP BY su.class_id, su.type_id
+             ORDER BY c.name, t.name",
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(values), |row| {
+                Ok(SubmissionSummaryRow {
+                    class_id: row.get(0)?,
+                    class_name: row.get(1)?,
+                    type_name: row.get(2)?,
+                    pending: row.get(3)?,
+                    approved: row.get(4)?,
+                    rejected: row.get(5)?,
+                    total_points: row.get(6)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+}
+
+fn role_row_mapper(row: &rusqlite::Row) -> rusqlite::Result<RoleRow> {
+    Ok(RoleRow {
+        id: row.get(0)?,
+        class_id: row.get(1)?,
+        class_name: row.get(2)?,
+        title: row.get(3)?,
+        student_id: row.get(4)?,
+        student_no: row.get(5)?,
+        student_name: row.get(6)?,
+        note: row.get(7)?,
+        created_at: row.get(8)?,
+    })
+}
+
+fn submission_row_mapper(row: &rusqlite::Row) -> rusqlite::Result<SubmissionRow> {
+    Ok(SubmissionRow {
+        id: row.get(0)?,
+        student_id: row.get(1)?,
+        student_no: row.get(2)?,
+        student_name: row.get(3)?,
+        class_id: row.get(4)?,
+        class_name: row.get(5)?,
+        type_id: row.get(6)?,
+        type_name: row.get(7)?,
+        points: row.get(8)?,
+        description: row.get(9)?,
+        evidence: row.get(10)?,
+        status: row.get(11)?,
+        device_id: row.get(12)?,
+        review_note: row.get(13)?,
+        reviewed_at: row.get(14)?,
+        created_at: row.get(15)?,
+    })
+}
+
+fn query_submission_row(
+    conn: &Connection,
+    where_clause: &str,
+    params: impl rusqlite::Params,
+) -> Result<Option<SubmissionRow>> {
+    let sql = format!(
+        "SELECT su.id, su.student_id, st.student_no, st.name AS student_name,
+                su.class_id, c.name AS class_name, su.type_id, t.name AS type_name,
+                su.points, su.description, su.evidence, su.status, su.device_id,
+                su.review_note, su.reviewed_at, su.created_at
+         FROM credit_submissions su
+         LEFT JOIN students st ON st.id = su.student_id
+         LEFT JOIN classes c ON c.id = su.class_id
+         LEFT JOIN credit_types t ON t.id = su.type_id
+         {where_clause}",
+        where_clause = where_clause,
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let row = stmt.query_row(params, submission_row_mapper).optional()?;
+    Ok(row)
 }
 
 fn query_record_row(

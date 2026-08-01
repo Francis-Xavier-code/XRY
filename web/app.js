@@ -4701,6 +4701,34 @@
     const refreshAlarmsButton = document.getElementById("refreshAlarmsButton");
     if (refreshAlarmsButton) refreshAlarmsButton.addEventListener("click", loadAlarms);
     elements.saveConfigButton.addEventListener("click", saveConfigDraft);
+    // 设备配对：生成二维码（学生用 App 扫码连接）
+    elements.pairingCreateButton?.addEventListener("click", async () => {
+      elements.pairingCreateButton.disabled = true;
+      try {
+        const response = await apiRequest("/api/pairing/create", { method: "POST" });
+        const data = await response.json().catch(() => null);
+        if (!data || data.ok !== true) throw new Error((data && data.error) || "生成配对二维码失败");
+        const qrHost = elements.pairingQrCode;
+        qrHost.innerHTML = "";
+        const qrText = data.qr || "";
+        if (window.QRCode && qrText) {
+          new QRCode(qrHost, { text: qrText, width: 180, height: 180 });
+        }
+        elements.pairingQr.style.display = "block";
+        elements.pairingCodeLine.textContent = `配对码：${data.code || ""}（5 分钟内有效）`;
+        const detail = document.createElement("p");
+        detail.className = "settings-description";
+        detail.style.marginTop = "6px";
+        detail.textContent = data.direct_ws
+          ? `本机直连：${data.direct_ws} · 公网中继：${data.relay_url || "未配置"}`
+          : `公网中继：${data.relay_url || "未配置"}`;
+        qrHost.parentElement.appendChild(detail);
+      } catch (error) {
+        showToast(String(error && error.message ? error.message : error), "error");
+      } finally {
+        elements.pairingCreateButton.disabled = false;
+      }
+    });
     elements.applyAdvancedConfigButton.addEventListener("click", applyAdvancedConfig);
     elements.sidebarThemeButton.addEventListener("click", () => setTheme(elements.body.dataset.theme === "graphite" ? "linen" : "graphite"));
     // 折叠侧栏（仅桌面；移动端侧栏是抽屉，不显示折叠按钮）

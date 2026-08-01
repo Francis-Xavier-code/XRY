@@ -10,12 +10,14 @@ use crate::state::{
 };
 use crate::tools::{self, CommandOutputStream};
 use anyhow::{Context, Result};
+use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
 use axum::extract::{ConnectInfo, DefaultBodyLimit, Path, Query, State};
 use axum::http::header::{
     CACHE_CONTROL, CONTENT_SECURITY_POLICY, CONTENT_TYPE, COOKIE, HOST, ORIGIN, REFERRER_POLICY,
     RETRY_AFTER, SET_COOKIE, X_CONTENT_TYPE_OPTIONS,
 };
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
+use axum::middleware::{self, Next};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
@@ -23,7 +25,7 @@ use axum::{Json, Router};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use futures_util::stream::{self, Stream};
-use futures_util::StreamExt;
+use futures_util::{SinkExt, StreamExt};
 use rand::rngs::OsRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -74,6 +76,10 @@ struct WebState {
     events: EventHub,
     questions: QuestionBroker,
     actor_tx: mpsc::UnboundedSender<ActorCommand>,
+    /// 局域网直连（APK 不经公网中继）：配对码 / 设备 / 在线连接
+    direct: Arc<DirectHub>,
+    /// 实际监听端口（pairing_create 生成直连地址用）
+    listen_port: u16,
 }
 
 #[derive(Clone)]
@@ -891,10 +897,9 @@ pub async fn run(paths: GqyPaths, args: WebArgs) -> Result<()> {
         .parse()
         .with_context(|| format!("invalid WebUI host: {}", args.host))?;
     if !bind_ip.is_loopback() && password.is_none() {
-        anyhow::bail!(
-            "绑定非回环地址（{}）必须设置访问密码：hilia web --host {} -p <password>",
-            args.host,
-            args.host
+        // 无密码时面板 API 仍仅限本机（lan_guard 中间件），局域网仅开放 APK 直连配对/消息
+        println!(
+            "⚠ 未设置访问密码：面板仅本机（127.0.0.1）可用，局域网仅支持 APK 直连配对与消息"
         );
     }
     AppConfig::init_files(&paths)?;
@@ -953,6 +958,8 @@ pub async fn run(paths: GqyPaths, args: WebArgs) -> Result<()> {
         events,
         questions,
         actor_tx: actor_tx.clone(),
+        direct: Arc::new(DirectHub::new()),
+        listen_port: port,
     };
     let app = router(state);
     // 只有设置了密码才把局域网地址列出来（无密码时仅回环可达）
@@ -985,7 +992,7 @@ pub async fn run(paths: GqyPaths, args: WebArgs) -> Result<()> {
 }
 
 fn router(state: WebState) -> Router {
-    Router::new()
+    let app = Router::new()
         .route("/", get(index_asset))
         .route("/styles.css", get(styles_asset))
         .route("/app.js", get(app_asset))
@@ -1036,7 +1043,15 @@ fn router(state: WebState) -> Router {
         .route("/api/alarms", get(list_alarms_web))
         .route("/api/state", get(session_state))
         .route("/api/alarms/{alarm_id}", delete(cancel_alarm_web))
-        .layer(DefaultBodyLimit::max(JSON_BODY_LIMIT))
+        // APK 对接：直连配对确认 + 中继结构化消息统一入口（本机/已认证）
+        .route("/api/pairing/confirm_direct", post(pairing_confirm_direct))
+        .route("/api/mobile/dispatch", post(mobile_dispatch))
+        .layer(DefaultBodyLimit::max(JSON_BODY_LIMIT));
+    // 无密码时：非回环来源仅允许 /pair/ws（APK 直连配对与消息），面板 API 一律 403
+    let guarded = app.layer(middleware::from_fn_with_state(state.clone(), lan_guard));
+    Router::new()
+        .route("/pair/ws", get(pair_ws))
+        .merge(guarded)
         .with_state(state)
 }
 
@@ -4249,6 +4264,296 @@ async fn update_check_api(
 
 // ─────────────────────────── 设备配对 API（APK 扫码） ───────────────────────────
 
+/// 无密码时限制面板 API 仅本机可达（/pair/ws 直连端点不受限）。
+async fn lan_guard(
+    State(state): State<WebState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    request: axum::extract::Request,
+    next: Next,
+) -> Response {
+    if state.auth.password_digest.is_none() && !addr.ip().is_loopback() {
+        return (
+            StatusCode::FORBIDDEN,
+            "面板仅本机可用；设置访问密码后可从局域网访问",
+        )
+            .into_response();
+    }
+    next.run(request).await
+}
+
+// ─────────────────────────── 局域网直连（APK 不经公网中继） ───────────────────────────
+
+/// 直连配对中枢：配对码（APK 连上后等面板确认）、设备表、在线连接。
+#[derive(Clone)]
+struct DirectHub {
+    /// 直连配对码 → 待确认配对（APK 已连 ws 等面板确认）
+    pending: Arc<Mutex<HashMap<String, PendingPair>>>,
+    /// 直连 token → 设备（配对成功后建立，重连用）
+    devices: Arc<Mutex<HashMap<String, DirectDevice>>>,
+    /// 在线 APK 设备 id → 消息通道（ws 断开即移除）
+    online: Arc<Mutex<HashMap<String, mpsc::UnboundedSender<WsMessage>>>>,
+}
+
+struct PendingPair {
+    apk_label: String,
+    expires_at: Instant,
+    ws: Option<mpsc::UnboundedSender<WsMessage>>,
+}
+
+#[derive(Clone)]
+struct DirectDevice {
+    device_id: String,
+    token: String,
+}
+
+impl DirectHub {
+    fn new() -> Self {
+        Self {
+            pending: Arc::new(Mutex::new(HashMap::new())),
+            devices: Arc::new(Mutex::new(HashMap::new())),
+            online: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    /// 生成直连配对码（8 字符，5 分钟有效；APK 尚未连接，ws 留空）。
+    fn create_pair_code(&self) -> String {
+        loop {
+            let code = direct_pair_code();
+            let mut pending = self.pending.lock().unwrap();
+            if !pending.contains_key(&code) {
+                pending.insert(
+                    code.clone(),
+                    PendingPair {
+                        apk_label: "等待扫码".to_string(),
+                        expires_at: Instant::now() + Duration::from_secs(300),
+                        ws: None,
+                    },
+                );
+                return code;
+            }
+        }
+    }
+
+    /// APK 连上 /pair/ws 后用配对码登记 → 返回 APK 标签（SSE 推送确认用）。
+    fn attach_pair_code(
+        &self,
+        code: &str,
+        ws: mpsc::UnboundedSender<WsMessage>,
+    ) -> std::result::Result<String, String> {
+        let mut pending = self.pending.lock().unwrap();
+        let Some(pair) = pending.get_mut(code) else {
+            return Err("配对码无效".to_string());
+        };
+        if pair.expires_at < Instant::now() {
+            pending.remove(code);
+            return Err("配对码已过期".to_string());
+        }
+        pair.ws = Some(ws);
+        Ok(pair.apk_label.clone())
+    }
+
+    /// 面板确认/拒绝直连配对：接受则签发 token 与设备 ID 并回 pair_result。
+    fn confirm_pair(&self, code: &str, accept: bool) -> std::result::Result<(), String> {
+        let mut pending = self.pending.lock().unwrap();
+        let Some(pair) = pending.remove(code) else {
+            return Err("配对码无效或已过期".to_string());
+        };
+        let Some(ws) = pair.ws else {
+            return Err("设备尚未连接".to_string());
+        };
+        if accept {
+            let token = random_token(16);
+            let device_id = format!("apk-{}", &random_token(4)[..8]);
+            self.devices.lock().unwrap().insert(
+                token.clone(),
+                DirectDevice {
+                    device_id: device_id.clone(),
+                    token: token.clone(),
+                },
+            );
+            let _ = ws.send(ws_text(
+                json!({
+                    "type": "pair_result",
+                    "accepted": true,
+                    "token": token,
+                    "device_id": device_id,
+                    "desktop_id": "desktop",
+                })
+                .to_string(),
+            ));
+        } else {
+            let _ = ws.send(ws_text(
+                json!({"type": "pair_result", "accepted": false}).to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn authenticate_token(&self, token: &str) -> Option<DirectDevice> {
+        self.devices.lock().unwrap().get(token).cloned()
+    }
+
+    fn register_online(&self, device_id: &str, ws: mpsc::UnboundedSender<WsMessage>) {
+        self.online.lock().unwrap().insert(device_id.to_string(), ws);
+    }
+
+    fn remove_online(&self, device_id: &str) {
+        self.online.lock().unwrap().remove(device_id);
+    }
+}
+
+/// 直连配对码：8 位字母数字，避开易混淆的 0/O/1/I。
+fn direct_pair_code() -> String {
+    const ALPHABET: &[u8] = b"23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+    let mut bytes = [0u8; 8];
+    OsRng.fill_bytes(&mut bytes);
+    bytes
+        .iter()
+        .map(|byte| ALPHABET[(*byte as usize) % ALPHABET.len()] as char)
+        .collect()
+}
+
+/// axum 0.8 的 ws 文本消息（Utf8Bytes 包装）。
+fn ws_text(value: String) -> WsMessage {
+    WsMessage::Text(axum::extract::ws::Utf8Bytes::from(value))
+}
+
+/// 局域网直连 WebSocket 端点：APK 扫码后优先直连（同 WiFi），失败自动切公网中继。
+/// 协议为 relay-server 兼容子集：auth(code/token) → pair_pending → 面板确认 → pair_result → 消息。
+async fn pair_ws(
+    State(state): State<WebState>,
+    ws: WebSocketUpgrade,
+) -> Response {
+    ws.on_upgrade(move |socket| handle_pair_ws(state, socket))
+}
+
+async fn handle_pair_ws(state: WebState, socket: WebSocket) {
+    let hub = state.direct.clone();
+    let (mut ws_sender, mut ws_receiver) = socket.split();
+    let (tx, mut rx) = mpsc::unbounded_channel::<WsMessage>();
+    let mut send_task = tokio::spawn(async move {
+        while let Some(message) = rx.recv().await {
+            if ws_sender.send(message).await.is_err() {
+                break;
+            }
+        }
+    });
+    let mut device_id: Option<String> = None;
+    while let Some(result) = ws_receiver.next().await {
+        let Ok(message) = result else {
+            break;
+        };
+        let Ok(text) = message.to_text() else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_str::<Value>(text) else {
+            continue;
+        };
+        let kind = value.get("type").and_then(Value::as_str).unwrap_or("");
+        match kind {
+            "auth" => {
+                if let Some(code) = value.get("code").and_then(Value::as_str) {
+                    // 配对码模式：登记并推送面板确认
+                    match hub.attach_pair_code(code, tx.clone()) {
+                        Ok(label) => {
+                            state.events.publish(
+                                "pairing.request",
+                                json!({
+                                    "code": code,
+                                    "apk_label": label,
+                                    "apk_device_id": "",
+                                    "direct": true,
+                                }),
+                            );
+                            let _ = tx.send(ws_text(
+                                json!({"type": "pair_pending", "expires_in": 300}).to_string(),
+                            ));
+                        }
+                        Err(reason) => {
+                            let _ = tx.send(ws_text(
+                                json!({"type": "auth_error", "code": 4003, "message": reason})
+                                    .to_string(),
+                            ));
+                        }
+                    }
+                } else if let Some(token) = value.get("token").and_then(Value::as_str) {
+                    // 已配对 token 重连
+                    if let Some(device) = hub.authenticate_token(token) {
+                        device_id = Some(device.device_id.clone());
+                        hub.register_online(&device.device_id, tx.clone());
+                        let _ = tx.send(ws_text(
+                            json!({"type": "auth_ok", "device_id": device.device_id}).to_string(),
+                        ));
+                    } else {
+                        let _ = tx.send(ws_text(
+                            json!({"type": "auth_error", "code": 4004, "message": "token 无效"})
+                                .to_string(),
+                        ));
+                    }
+                }
+            }
+            "ping" => {
+                let _ = tx.send(ws_text(json!({"type": "pong"}).to_string()));
+            }
+            "message" => {
+                let Some(device_id) = device_id.as_deref() else {
+                    let _ = tx.send(ws_text(
+                        json!({"type": "auth_error", "code": 4001, "message": "未认证"})
+                            .to_string(),
+                    ));
+                    continue;
+                };
+                let msg_id = value
+                    .get("msg_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                let body = value.get("body").cloned().unwrap_or(json!({}));
+                let reply = handle_direct_message(&state, device_id, &body).await;
+                for part in split_reply_chunks(&reply, 4000) {
+                    let _ = tx.send(ws_text(
+                        json!({
+                            "type": "message",
+                            "to": device_id,
+                            "msg_id": msg_id,
+                            "body": {"reply": part},
+                        })
+                        .to_string(),
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Some(device_id) = device_id {
+        hub.remove_online(&device_id);
+    }
+    drop(tx);
+    let _ = send_task.await;
+}
+
+/// 长回复分片（避免切断 emoji 代理对；与 bridge-common.cjs splitReply 同语义）。
+fn split_reply_chunks(reply: &str, max_chars: usize) -> Vec<String> {
+    if reply.chars().count() <= max_chars {
+        return vec![reply.to_string()];
+    }
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut current_count = 0usize;
+    for character in reply.chars() {
+        current.push(character);
+        current_count += 1;
+        if current_count >= max_chars {
+            parts.push(std::mem::take(&mut current));
+            current_count = 0;
+        }
+    }
+    if !current.is_empty() {
+        parts.push(current);
+    }
+    parts
+}
+
 /// 中继 REST 基地址（wss://host/ws → https://host）。
 fn relay_http_base(relay_url: &str) -> std::result::Result<String, ApiError> {
     let url = relay_url.trim();
@@ -4272,46 +4577,568 @@ async fn pairing_create(
     headers: HeaderMap,
 ) -> std::result::Result<Json<Value>, ApiError> {
     require_auth(&headers, &state)?;
+    // 1. 直连配对码（本地生成，无需中继；同 WiFi 下 APK 优先直连）
+    let dcode = state.direct.create_pair_code();
+    let direct_ws = local_ip_address::local_ip()
+        .ok()
+        .map(|ip| format!("ws://{ip}:{}/pair/ws", state.listen_port));
+    let mut qr = format!(
+        "hilia://pair?direct={}&dcode={dcode}",
+        direct_ws.as_deref().unwrap_or("")
+    );
+    // 2. 公网中继配对码（可选：未配置中继时仅直连可用，异地无法连接）
+    let mut relay_url = String::new();
+    let mut code = String::new();
+    let mut expires_in = 300i64;
     let bridges = crate::bridges::load(&state.paths).map_err(ApiError::internal)?;
-    let relay = bridges
-        .relay
-        .as_ref()
-        .ok_or_else(|| ApiError::new(StatusCode::BAD_REQUEST, "中继未配置：先 `hilia relay install`"))?;
-    let base = relay_http_base(&relay.relay_url)?;
-    let relay_url = relay.relay_url.clone();
-    let body: Value = tokio::task::spawn_blocking(move || -> std::result::Result<Value, String> {
-        let client = reqwest::blocking::Client::builder()
-            .connect_timeout(std::time::Duration::from_secs(10))
-            .timeout(std::time::Duration::from_secs(20))
-            .build()
-            .map_err(|error| error.to_string())?;
-        let hostname = std::env::var("COMPUTERNAME").unwrap_or_else(|_| "Windows 桌面".to_string());
-        let response = client
-            .post(format!("{base}/pairing/register"))
-            .json(&json!({ "label": hostname }))
-            .send()
-            .map_err(|error| format!("中继连接失败：{error}"))?;
-        if !response.status().is_success() {
-            return Err(format!("中继注册失败：HTTP {}", response.status()));
+    if let Some(relay) = bridges.relay.as_ref() {
+        let base = relay_http_base(&relay.relay_url)?;
+        relay_url = relay.relay_url.clone();
+        let relay_result: std::result::Result<Value, String> = tokio::task::spawn_blocking({
+            let base = base.clone();
+            move || -> std::result::Result<Value, String> {
+                let client = reqwest::blocking::Client::builder()
+                    .connect_timeout(std::time::Duration::from_secs(10))
+                    .timeout(std::time::Duration::from_secs(20))
+                    .build()
+                    .map_err(|error| error.to_string())?;
+                let hostname =
+                    std::env::var("COMPUTERNAME").unwrap_or_else(|_| "Windows 桌面".to_string());
+                let response = client
+                    .post(format!("{base}/pairing/register"))
+                    .json(&json!({ "label": hostname }))
+                    .send()
+                    .map_err(|error| format!("中继连接失败：{error}"))?;
+                if !response.status().is_success() {
+                    return Err(format!("中继注册失败：HTTP {}", response.status()));
+                }
+                response.json().map_err(|error| error.to_string())
+            }
+        })
+        .await
+        .map_err(ApiError::internal)?;
+        match relay_result {
+            Ok(body) => {
+                code = body
+                    .get("code")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                expires_in = body.get("expires_in").and_then(Value::as_i64).unwrap_or(300);
+                if !code.is_empty() {
+                    qr.push_str(&format!("&relay={relay_url}&code={code}"));
+                }
+            }
+            Err(_message) => {
+                // 中继不可达：二维码仍可直连使用
+                relay_url.clear();
+            }
         }
-        response.json().map_err(|error| error.to_string())
-    })
-    .await
-    .map_err(ApiError::internal)?
-    .map_err(|message| ApiError::new(StatusCode::BAD_GATEWAY, message))?;
-    let code = body.get("code").and_then(Value::as_str).unwrap_or_default().to_string();
-    let expires_in = body.get("expires_in").and_then(Value::as_i64).unwrap_or(300);
-    if code.is_empty() {
-        return Err(ApiError::internal("中继返回缺少 code"));
     }
     Ok(Json(json!({
         "ok": true,
         "code": code,
+        "dcode": dcode,
         "relay_url": relay_url,
+        "direct_ws": direct_ws,
         "expires_in": expires_in,
-        // 二维码内容（APK 扫码解析）
-        "qr": format!("hilia://pair?relay={relay_url}&code={code}"),
+        // 二维码内容（APK 扫码解析；含 relay 段时异地可连接）
+        "qr": qr,
     })))
+}
+
+/// 辅导员确认/拒绝直连配对（APK 直连本机 /pair/ws 时由面板弹窗触发）。
+async fn pairing_confirm_direct(
+    State(state): State<WebState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> std::result::Result<Json<Value>, ApiError> {
+    require_auth(&headers, &state)?;
+    let code = body
+        .get("code")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    if code.is_empty() {
+        return Err(ApiError::bad_request("code required"));
+    }
+    let accept = body.get("accept").and_then(Value::as_bool).unwrap_or(false);
+    state
+        .direct
+        .confirm_pair(&code, accept)
+        .map_err(ApiError::bad_request)?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+/// 中继路径结构化消息统一入口：bridge.cjs 收到 APK 的 body.kind 消息时转发到这里，
+/// 与直连路径（/pair/ws 内直接处理）共用同一套逻辑。
+async fn mobile_dispatch(
+    State(state): State<WebState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> std::result::Result<Json<Value>, ApiError> {
+    require_auth(&headers, &state)?;
+    let device_id = body
+        .get("device_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    if device_id.is_empty() {
+        return Err(ApiError::bad_request("device_id required"));
+    }
+    let payload = body.get("body").cloned().unwrap_or(json!({}));
+    let reply = handle_direct_message(&state, &device_id, &payload).await;
+    Ok(Json(json!({ "ok": true, "reply": reply })))
+}
+
+/// APK 消息统一入口：结构化消息（kind=credit_apply 等）直接处理；
+/// 文本消息走 hilia ask（与 bridge.cjs 同一会话隔离与身份注入）。
+async fn handle_direct_message(state: &WebState, device_id: &str, body: &Value) -> String {
+    let kind = body.get("kind").and_then(Value::as_str).unwrap_or("text");
+    match kind {
+        "text" | "question" => run_hilia_ask(state, device_id, body).await,
+        "admin_auth" => handle_admin_auth(state, device_id, body).await,
+        "credit_types" => handle_mobile_credit_types(state).await,
+        "credit_my" => handle_mobile_credit_my(state, device_id).await,
+        "credit_apply" => handle_mobile_credit_apply(state, device_id, body).await,
+        "credit_submissions" => handle_mobile_submissions(state, device_id, body).await,
+        "credit_approve" => handle_mobile_review(state, device_id, body, true).await,
+        "credit_reject" => handle_mobile_review(state, device_id, body, false).await,
+        "credit_summary" => handle_mobile_credit_summary(state, device_id, body).await,
+        _ => format!(r#"{{"ok":false,"error":"未知消息类型：{kind}"}}"#),
+    }
+}
+
+/// APK 文本消息 → hilia ask（与 bridge.cjs 相同的会话目录 / 身份 / 超时语义）。
+async fn run_hilia_ask(state: &WebState, device_id: &str, body: &Value) -> String {
+    let text = body
+        .get("text")
+        .or_else(|| body.get("question"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if text.is_empty() {
+        return r#"{"ok":false,"error":"消息为空"}"#.to_string();
+    }
+    let session_home = state
+        .paths
+        .data_dir
+        .join("sessions")
+        .join(format!("relay-apk-{device_id}"));
+    let extra_env = ensure_apk_session_env(&state.paths, &session_home);
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("hilia"));
+    let mut command = tokio::process::Command::new(exe);
+    command
+        .args([
+            "--stdout",
+            "--bridge-platform",
+            "apk",
+            "--bridge-user-id",
+            device_id,
+            "--bridge-chat-id",
+            device_id,
+            "ask",
+            &text,
+        ])
+        .env("NO_COLOR", "1")
+        .env("HILIA_HOME", &session_home)
+        .envs(&extra_env)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let output = tokio::time::timeout(Duration::from_secs(120), command.output()).await;
+    match output {
+        Ok(Ok(output)) => {
+            if output.status.success() {
+                let reply = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if reply.is_empty() {
+                    "(我没想出该说啥)".to_string()
+                } else {
+                    reply
+                }
+            } else {
+                let mut detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                if detail.is_empty() {
+                    detail = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                }
+                let detail: String = detail.chars().take(200).collect();
+                format!("出错了：{detail}")
+            }
+        }
+        _ => "处理超时了（120s），换个问法试试？".to_string(),
+    }
+}
+
+/// APK 会话目录初始化：首次使用时把主配置复制过去，敏感字段脱敏为 $env 引用
+/// （与 bridge-common.cjs ensureSession 同语义，保证 APK 对话跟随导员配置）。
+fn ensure_apk_session_env(paths: &GqyPaths, session_home: &FilePath) -> HashMap<String, String> {
+    let mut env_map = HashMap::new();
+    let cfg_dir = session_home.join("config");
+    let cfg_path = cfg_dir.join("config.jsonc");
+    if cfg_path.exists() {
+        return env_map;
+    }
+    let Ok(main_text) = std::fs::read_to_string(&paths.config_file) else {
+        return env_map;
+    };
+    let stripped = json_comments::StripComments::new(main_text.as_bytes());
+    let mut value: Value = match serde_json::from_reader(stripped) {
+        Ok(value) => value,
+        Err(_) => return env_map,
+    };
+    let mut counter = 0usize;
+    redact_config_secrets(&mut value, &mut env_map, &mut counter);
+    let Ok(serialized) = serde_json::to_string_pretty(&value) else {
+        return env_map;
+    };
+    if std::fs::create_dir_all(&cfg_dir).is_err() {
+        return env_map;
+    }
+    let _ = std::fs::write(&cfg_path, serialized);
+    env_map
+}
+
+fn redact_config_secrets(
+    value: &mut Value,
+    env_map: &mut HashMap<String, String>,
+    counter: &mut usize,
+) {
+    match value {
+        Value::Object(map) => {
+            for (key, child) in map.iter_mut() {
+                if is_secret_key(key) && child.is_string() {
+                    *counter += 1;
+                    let env_name = format!("HILIA_CFG_{counter}");
+                    if let Some(raw) = child.as_str() {
+                        env_map.insert(env_name.clone(), raw.to_string());
+                        *child = Value::String(format!("$env:{env_name}"));
+                    }
+                } else {
+                    redact_config_secrets(child, env_map, counter);
+                }
+            }
+        }
+        Value::Array(items) => {
+            for item in items.iter_mut() {
+                redact_config_secrets(item, env_map, counter);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn is_secret_key(key: &str) -> bool {
+    let lower = key.to_ascii_lowercase();
+    lower.contains("api_key")
+        || lower.contains("apikey")
+        || lower.contains("token")
+        || lower.contains("password")
+        || lower.contains("secret")
+        || lower.contains("credential")
+}
+
+/// 辅导员身份确认（APK 输管理员激活码 → 本地验签 → 登记为辅导员设备）。
+async fn handle_admin_auth(state: &WebState, device_id: &str, body: &Value) -> String {
+    let code = body
+        .get("activation_code")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if code.is_empty() {
+        return r#"{"ok":false,"error":"激活码不能为空"}"#.to_string();
+    }
+    // 与 hilia license activate 相同的验签逻辑（plan 需含 admin）
+    let payload = match crate::license::verify_activation_code(&code) {
+        Ok(payload) => payload,
+        Err(_) => return r#"{"ok":false,"error":"激活码无效或已过期"}"#.to_string(),
+    };
+    let is_admin_plan = payload.plan.contains("admin") || payload.plan.contains("pro");
+    if !is_admin_plan {
+        return r#"{"ok":false,"error":"该激活码不是管理员（辅导员）授权"}"#.to_string();
+    }
+    let expires_at = if payload.expires_at <= 0 {
+        String::new()
+    } else {
+        match chrono::DateTime::from_timestamp(payload.expires_at, 0) {
+            Some(time) => time.to_rfc3339(),
+            None => String::new(),
+        }
+    };
+    let paths = state.paths.clone();
+    let device_id = device_id.to_string();
+    let plan = payload.plan.clone();
+    let user = payload.user.clone();
+    let expires_at_clone = expires_at.clone();
+    let result: anyhow::Result<()> = tokio::task::spawn_blocking(move || {
+        let db = crate::state::CreditsDb::open(&paths.data_dir)?;
+        db.confirm_admin_device(&device_id, &plan, &user, &expires_at_clone)?;
+        Ok(())
+    })
+    .await
+    .map_err(|error| anyhow::anyhow!(error))
+    .and_then(|result| result);
+    match result {
+        Ok(()) => json!({
+            "ok": true,
+            "admin": true,
+            "plan": payload.plan,
+            "user": payload.user,
+            "expires_at": expires_at,
+        })
+        .to_string(),
+        Err(error) => format!(r#"{{"ok":false,"error":"登记失败：{error}"}}"#),
+    }
+}
+
+/// 学分类型列表（APK 申报表单下拉）。
+async fn handle_mobile_credit_types(state: &WebState) -> String {
+    let paths = state.paths.clone();
+    let result: anyhow::Result<Vec<crate::state::CreditTypeRow>> =
+        tokio::task::spawn_blocking(move || {
+            let db = crate::state::CreditsDb::open(&paths.data_dir)?;
+            db.list_credit_types()
+        })
+        .await
+        .map_err(anyhow::Error::from)
+        .and_then(|result| result);
+    match result {
+        Ok(types) => json!({
+            "ok": true,
+            "types": types
+                .iter()
+                .map(|t| json!({
+                    "id": t.id,
+                    "name": t.name,
+                    "description": t.description,
+                    "max_points": t.max_points,
+                }))
+                .collect::<Vec<_>>(),
+        })
+        .to_string(),
+        Err(error) => format!(r#"{{"ok":false,"error":"{error}"}}"#),
+    }
+}
+
+/// 我的学分（APK 绑定学号后查询自己的汇总与明细）。
+async fn handle_mobile_credit_my(state: &WebState, device_id: &str) -> String {
+    let paths = state.paths.clone();
+    let device_id = device_id.to_string();
+    let result: anyhow::Result<Value> = tokio::task::spawn_blocking(move || {
+        let db = crate::state::CreditsDb::open(&paths.data_dir)?;
+        let Some(student) = db.find_student_by_apk(&device_id)? else {
+            return Ok(json!({"ok": false, "error": "未绑定学号", "unbound": true}));
+        };
+        let summary = db.summary(Some(student.id), None)?;
+        let records = db.query_credits(Some(student.id), None, None, "", "")?;
+        Ok(json!({
+            "ok": true,
+            "student": json!({"student_no": student.student_no, "name": student.name}),
+            "total": summary.total,
+            "by_type": summary
+                .by_type
+                .iter()
+                .map(|(name, points)| json!({"type": name, "points": points}))
+                .collect::<Vec<_>>(),
+            "records": records
+                .iter()
+                .map(|r| json!({
+                    "type_name": r.type_name,
+                    "points": r.points,
+                    "note": r.note,
+                    "created_at": r.created_at,
+                }))
+                .collect::<Vec<_>>(),
+        }))
+    })
+    .await
+    .map_err(anyhow::Error::from)
+    .and_then(|result| result);
+    match result {
+        Ok(value) => value.to_string(),
+        Err(error) => format!(r#"{{"ok":false,"error":"{error}"}}"#),
+    }
+}
+
+/// 问卷申报（职位人员）：提交学分 + 证据照片（base64 ≤ 3 张）。
+async fn handle_mobile_credit_apply(state: &WebState, device_id: &str, body: &Value) -> String {
+    let paths = state.paths.clone();
+    let device_id = device_id.to_string();
+    let type_id = body.get("type_id").and_then(Value::as_i64);
+    let points = body.get("points").and_then(Value::as_f64).unwrap_or(0.0);
+    let description = body
+        .get("description")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let evidence: Vec<Value> = body
+        .get("evidence")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
+        let db = crate::state::CreditsDb::open(&paths.data_dir)?;
+        let Some(student) = db.find_student_by_apk(&device_id)? else {
+            return Ok(r#"{"ok":false,"error":"未绑定学号","unbound":true}"#.to_string());
+        };
+        // 申报权限：必须有班级职位（班长/学委等）
+        if db.find_role_by_student(student.id)?.is_none() {
+            return Ok(
+                r#"{"ok":false,"error":"只有班级职位人员（如班长）才能填写学分申报"}"#.to_string(),
+            );
+        }
+        let submission_id =
+            db.add_submission(student.id, type_id, points, &description, &device_id)?;
+        // 证据照片落盘：data_dir/evidence/<submission_id>_<n>.<ext>
+        let mut saved = Vec::new();
+        if !evidence.is_empty() {
+            let evidence_dir = paths.data_dir.join("evidence");
+            std::fs::create_dir_all(&evidence_dir)?;
+            for (index, item) in evidence.iter().enumerate().take(3) {
+                let name = item.get("name").and_then(Value::as_str).unwrap_or("photo");
+                let data = item.get("data").and_then(Value::as_str).unwrap_or("");
+                if data.is_empty() {
+                    continue;
+                }
+                let bytes = base64::Engine::decode(
+                    &base64::engine::general_purpose::STANDARD,
+                    data,
+                )
+                .map_err(|error| anyhow::anyhow!("图片解码失败：{error}"))?;
+                let extension = std::path::Path::new(name)
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .unwrap_or("jpg")
+                    .to_ascii_lowercase();
+                let file_name = format!("{submission_id}_{}.{extension}", index + 1);
+                let file_path = evidence_dir.join(&file_name);
+                std::fs::write(&file_path, bytes)?;
+                saved.push(json!({"name": name, "file": file_name}));
+            }
+            db.set_submission_evidence(submission_id, &serde_json::to_string(&saved)?)?;
+        }
+        Ok(json!({
+            "ok": true,
+            "submission_id": submission_id,
+            "student_no": student.student_no,
+            "student_name": student.name,
+            "evidence_count": saved.len(),
+            "status": "pending",
+        })
+        .to_string())
+    })
+    .await
+    .map_err(anyhow::Error::from)
+    .and_then(|result| result);
+    match result {
+        Ok(reply) => reply,
+        Err(error) => format!(r#"{{"ok":false,"error":"{error}"}}"#),
+    }
+}
+
+/// 申报列表（辅导员：按状态/班级过滤）。
+async fn handle_mobile_submissions(state: &WebState, device_id: &str, body: &Value) -> String {
+    let paths = state.paths.clone();
+    let device_id = device_id.to_string();
+    let status = body.get("status").and_then(Value::as_str).map(str::to_string);
+    let class_id = body.get("class_id").and_then(Value::as_i64);
+    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
+        let db = crate::state::CreditsDb::open(&paths.data_dir)?;
+        if !db.is_admin_device(&device_id)? {
+            return Ok(r#"{"ok":false,"error":"仅辅导员可查看申报列表"}"#.to_string());
+        }
+        let submissions = db.list_submissions(status.as_deref(), class_id, None, None, None)?;
+        Ok(serde_json::to_string(&json!({
+            "ok": true,
+            "submissions": submissions,
+        }))?)
+    })
+    .await
+    .map_err(anyhow::Error::from)
+    .and_then(|result| result);
+    match result {
+        Ok(reply) => reply,
+        Err(error) => format!(r#"{{"ok":false,"error":"{error}"}}"#),
+    }
+}
+
+/// 审批/驳回申报（辅导员）。
+async fn handle_mobile_review(
+    state: &WebState,
+    device_id: &str,
+    body: &Value,
+    approve: bool,
+) -> String {
+    let paths = state.paths.clone();
+    let device_id = device_id.to_string();
+    let submission_id = body.get("submission_id").and_then(Value::as_i64);
+    let note = body
+        .get("review_note")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
+        let db = crate::state::CreditsDb::open(&paths.data_dir)?;
+        if !db.is_admin_device(&device_id)? {
+            return Ok(r#"{"ok":false,"error":"仅辅导员可审批申报"}"#.to_string());
+        }
+        let Some(submission_id) = submission_id else {
+            return Ok(r#"{"ok":false,"error":"缺少 submission_id"}"#.to_string());
+        };
+        if approve {
+            db.approve_submission(submission_id, &note, &format!("APK 辅导员 {device_id}"))?;
+        } else {
+            db.reject_submission(submission_id, &note)?;
+        }
+        Ok(json!({"ok": true}).to_string())
+    })
+    .await
+    .map_err(anyhow::Error::from)
+    .and_then(|result| result);
+    match result {
+        Ok(reply) => reply,
+        Err(error) => format!(r#"{{"ok":false,"error":"{error}"}}"#),
+    }
+}
+
+/// 申报统计（辅导员：当日/区间汇总，供 AI 总结与面板展示）。
+async fn handle_mobile_credit_summary(state: &WebState, device_id: &str, body: &Value) -> String {
+    let paths = state.paths.clone();
+    let device_id = device_id.to_string();
+    let date_from = body
+        .get("date_from")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let date_to = body.get("date_to").and_then(Value::as_str).map(str::to_string);
+    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
+        let db = crate::state::CreditsDb::open(&paths.data_dir)?;
+        if !db.is_admin_device(&device_id)? {
+            return Ok(r#"{"ok":false,"error":"仅辅导员可查看申报统计"}"#.to_string());
+        }
+        let summary = db.submissions_summary(date_from.as_deref(), date_to.as_deref())?;
+        let totals: Vec<Value> = summary
+            .iter()
+            .map(|row| {
+                json!({
+                    "class_name": row.class_name,
+                    "type_name": row.type_name,
+                    "pending": row.pending,
+                    "approved": row.approved,
+                    "rejected": row.rejected,
+                    "approved_points": row.total_points,
+                })
+            })
+            .collect();
+        Ok(serde_json::to_string(&json!({"ok": true, "summary": totals}))?)
+    })
+    .await
+    .map_err(anyhow::Error::from)
+    .and_then(|result| result);
+    match result {
+        Ok(reply) => reply,
+        Err(error) => format!(r#"{{"ok":false,"error":"{error}"}}"#),
+    }
 }
 
 /// 配对请求通知（由 relay bridge 本地调用）：SSE 推给面板弹确认。
