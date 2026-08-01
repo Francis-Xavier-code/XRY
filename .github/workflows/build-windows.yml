@@ -110,6 +110,14 @@ jobs:
           Copy-Item update.json "${{ env.stage_dir }}/update-windows.json"
           echo "update_json_ready=true" | Out-File -FilePath $env:GITHUB_ENV -Append
 
+      - name: 构建统一安装器（NSIS）
+        shell: pwsh
+        run: |
+          choco install nsis -y --no-progress
+          makensis /DSTAGE_DIR="${{ env.stage_dir }}" /DAPP_VERSION=${{ env.stage_version }} windows/installer.nsi
+          New-Item -ItemType Directory -Force -Path "${{ env.stage_dir }}/installer" | Out-Null
+          Copy-Item "Hilia-Setup-${{ env.stage_version }}.exe" "${{ env.stage_dir }}/installer/" -Force
+
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
@@ -119,6 +127,7 @@ jobs:
             ${{ env.stage_dir }}/hilia.exe
             ${{ env.stage_dir }}/hilia-tray.exe
             ${{ env.stage_dir }}/update.json
+            ${{ env.stage_dir }}/installer/Hilia-Setup-${{ env.stage_version }}.exe
           if-no-files-found: error
 
       - name: 发布 GitHub Release（tag 触发）
@@ -126,12 +135,18 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
+            ${{ env.stage_dir }}/installer/Hilia-Setup-${{ env.stage_version }}.exe
             ${{ env.stage_dir }}.zip
             ${{ env.stage_dir }}/update.json
           body: |
             希尔娅 v${{ github.ref_name }}（Windows x86_64）
 
-            - 解压 `install.ps1` 同目录运行即可安装（安装到 `C:\hilia`）
-            - 或手动解压后运行 `hilia.exe` / `hilia-tray.exe`
-            - 更新：`hilia update check` / `hilia update apply`（自动走多加速源）
+            ## 安装包（推荐）
+            - `Hilia-Setup-${{ env.stage_version }}.exe`：统一安装主体 + 菜单栏（托盘）+ 开始菜单快捷方式 + 可选开机自启
+
+            ## 便携版
+            - `Hilia-${{ env.stage_version }}-windows.zip`：解压运行 `hilia-tray.exe`（或 `install.ps1`）
+
+            ## 更新
+            - `hilia update check` / `hilia update apply`（自动走多加速源）
             - 开发者：2101497063@qq.com
