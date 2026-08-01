@@ -98,6 +98,9 @@
     pairingQr: document.getElementById("pairingQr"),
     pairingQrCode: document.getElementById("pairingQrCode"),
     pairingCodeLine: document.getElementById("pairingCodeLine"),
+    advisorLicenseStatus: document.getElementById("advisorLicenseStatus"),
+    licenseCodeInput: document.getElementById("licenseCodeInput"),
+    licenseActivateButton: document.getElementById("licenseActivateButton"),
     currentConversation: document.getElementById("currentConversation"),
     sidebarConversationTitle: document.getElementById("sidebarConversationTitle"),
     sidebarConversationSnippet: document.getElementById("sidebarConversationSnippet"),
@@ -4020,6 +4023,7 @@
       state.externalQueueAvailable = Boolean(nextExternalTurnId && snapshot?.external_queue_available);
       elements.versionLabel.textContent = state.version ? `v${state.version}` : "--";
       refreshUpdateStatus();
+      refreshLicenseStatus();
       if ((previousExternalTurnId || nextExternalTurnId) && (turnsChanged || previousExternalTurnId !== nextExternalTurnId)) {
         renderConversation();
       }
@@ -4104,6 +4108,33 @@
     }
     if (RUN_EVENTS.has(name) && state.activeRunId && String(data?.run_id || "") !== state.activeRunId) return false;
     return true;
+  }
+
+  function refreshLicenseStatus() {
+    const statusEl = elements.advisorLicenseStatus;
+    if (!statusEl) return;
+    statusEl.textContent = "查询中…";
+    fetch("/api/license/status")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!data) {
+          statusEl.textContent = "未激活（获取失败）";
+          return;
+        }
+        if (data.is_admin) {
+          const expires = data.expires_at ? `，有效期至 ${data.expires_at.slice(0, 10)}` : "";
+          statusEl.textContent = `✅ 已激活（辅导员授权 · ${data.plan || "admin"}${expires}）`;
+          statusEl.style.color = "#5ac88a";
+        } else if (data.status === "activated") {
+          statusEl.textContent = `已激活（${data.plan || ""}，非辅导员授权）`;
+        } else {
+          statusEl.textContent = "未激活：导出 / 审批 / 职位管理 / AI 总结需辅导员私密钥匙";
+          statusEl.style.color = "#e0a85a";
+        }
+      })
+      .catch(() => {
+        statusEl.textContent = "未激活（查询失败）";
+      });
   }
 
   function refreshUpdateStatus() {
@@ -4701,6 +4732,33 @@
     const refreshAlarmsButton = document.getElementById("refreshAlarmsButton");
     if (refreshAlarmsButton) refreshAlarmsButton.addEventListener("click", loadAlarms);
     elements.saveConfigButton.addEventListener("click", saveConfigDraft);
+    // 辅导员激活（私密钥匙）
+    elements.licenseActivateButton?.addEventListener("click", async () => {
+      const code = (elements.licenseCodeInput?.value || "").trim();
+      if (!code) {
+        showToast("请输入私密钥匙（HILIA1.xxx.yyy）", "error");
+        return;
+      }
+      elements.licenseActivateButton.disabled = true;
+      try {
+        const response = await apiRequest("/api/license/activate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code }),
+        });
+        const data = await response.json().catch(() => null);
+        if (!data || data.ok !== true) {
+          throw new Error((data && data.error) || "激活失败");
+        }
+        showToast("辅导员授权成功：" + (data.plan || ""), "success");
+        if (elements.licenseCodeInput) elements.licenseCodeInput.value = "";
+        refreshLicenseStatus();
+      } catch (error) {
+        showToast(String(error && error.message ? error.message : error), "error");
+      } finally {
+        elements.licenseActivateButton.disabled = false;
+      }
+    });
     // 设备配对：生成二维码（学生用 App 扫码连接）
     elements.pairingCreateButton?.addEventListener("click", async () => {
       elements.pairingCreateButton.disabled = true;

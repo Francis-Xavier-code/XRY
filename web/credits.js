@@ -141,6 +141,18 @@ function renderRecordFilters() {
     typeFilter.appendChild(opt);
   }
   typeFilter.value = prevType;
+  const submissionClassFilter = $('submissionClassFilter');
+  if (submissionClassFilter) {
+    const prevSubmissionClass = submissionClassFilter.value;
+    submissionClassFilter.innerHTML = '<option value="">全部班级</option>';
+    for (const cls of state.classes) {
+      const opt = document.createElement('option');
+      opt.value = cls.id;
+      opt.textContent = cls.name;
+      submissionClassFilter.appendChild(opt);
+    }
+    submissionClassFilter.value = prevSubmissionClass;
+  }
 }
 
 function renderStudents() {
@@ -377,6 +389,7 @@ async function refreshAll() {
   await loadOverview();
   await loadStudents();
   await loadRecords();
+  loadSubmissions();
 }
 
 // ───────────────────────── 事件绑定 ─────────────────────────
@@ -439,3 +452,139 @@ refreshAll().catch((e) => {
   if (e.message === '未登录') return;
   alert('加载失败：' + e.message);
 });
+
+// ───────────────────────── 申报审批（辅导员） ─────────────────────────
+
+async function loadSubmissions() {
+  const status = $('submissionStatusFilter').value;
+  const classId = $('submissionClassFilter').value;
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  if (classId) params.set('class_id', classId);
+  const hint = $('submissionHint');
+  if (hint) hint.textContent = '加载中…';
+  try {
+    const res = await api('GET', '/api/credits/submissions?' + params.toString());
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      throw new Error((data && data.error) || `HTTP ${res.status}`);
+    }
+    renderSubmissions(data.submissions || []);
+    if (hint) hint.textContent = '';
+  } catch (error) {
+    if (hint) hint.textContent = '';
+    const list = $('submissionList');
+    if (list) {
+      list.innerHTML = `<p class="hint" style="color:#e0a85a">申报审批需辅导员私密钥匙：${escapeHtml(error.message || error)}</p>`;
+    }
+  }
+}
+
+const SUBMISSION_STATUS_LABEL = {
+  pending: '⏳ 待审批',
+  approved: '✅ 已通过',
+  rejected: '❌ 已驳回',
+};
+
+function renderSubmissions(submissions) {
+  const list = $('submissionList');
+  if (!list) return;
+  const pendingTotal = submissions.filter((s) => s.status === 'pending').length;
+  const badge = $('pendingCount');
+  if (badge) {
+    if (pendingTotal > 0) {
+      badge.textContent = `${pendingTotal} 条待审`;
+      badge.style.display = 'inline';
+    } else {
+      badge.style.display = 'none';
+    }
+  }
+  if (!submissions.length) {
+    list.innerHTML = '<p class="hint">暂无申报记录。</p>';
+    return;
+  }
+  list.innerHTML = '';
+  for (const submission of submissions) {
+    const card = document.createElement('div');
+    card.className = 'submission-card';
+    card.style.cssText = 'border:1px solid var(--border,rgba(255,255,255,0.12));border-radius:10px;padding:12px 14px;margin-bottom:10px;background:var(--card-bg,rgba(255,255,255,0.03))';
+    const statusLabel = SUBMISSION_STATUS_LABEL[submission.status] || submission.status;
+    const evidence = parseEvidence(submission.evidence);
+    const evidenceHtml = evidence.length
+      ? `<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">${evidence
+          .map(
+            (file) =>
+              `<img src="/api/credits/evidence/${encodeURIComponent(file)}" style="width:64px;height:64px;object-fit:cover;border-radius:6px;cursor:zoom-in" onclick="window.open('/api/credits/evidence/${encodeURIComponent(file)}','_blank')" alt="证据">`
+          )
+          .join('')}</div>`
+      : '';
+    const actions =
+      submission.status === 'pending'
+        ? `<button class="cbtn" style="margin-right:6px" onclick="approveSubmission(${submission.id})">通过</button>
+           <button class="cbtn secondary" onclick="rejectSubmission(${submission.id})">驳回</button>`
+        : '';
+    card.innerHTML = `
+      <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap">
+        <div>
+          <b>#${submission.id} ${escapeHtml(submission.student_name)}（${escapeHtml(submission.student_no)}）</b>
+          <span class="hint">${escapeHtml(submission.class_name || '未分班')} · ${escapeHtml(submission.type_name || '未分类')} +${submission.points} 分</span>
+        </div>
+        <span>${statusLabel}</span>
+      </div>
+      ${submission.description ? `<p style="margin:6px 0 0;font-size:13px">${escapeHtml(submission.description)}</p>` : ''}
+      ${evidenceHtml}
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;flex-wrap:wrap;gap:6px">
+        <span class="hint" style="font-size:12px">${escapeHtml(submission.created_at || '')}${submission.review_note ? ` · 意见：${escapeHtml(submission.review_note)}` : ''}</span>
+        <span>${actions}</span>
+      </div>`;
+    list.appendChild(card);
+  }
+}
+
+function parseEvidence(raw) {
+  try {
+    const parsed = JSON.parse(raw || '[]');
+    if (Array.isArray(parsed)) {
+      return parsed.map((item) => (typeof item === 'string' ? item : item.file)).filter(Boolean);
+    }
+  } catch (_) {}
+  return [];
+}
+
+async function approveSubmission(id) {
+  const res = await api('POST', `/api/credits/submissions/${id}/approve`, { review_note: '' });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) {
+    alert(`通过失败：${(data && data.error) || `HTTP ${res.status}`}`);
+    return;
+  }
+  loadSubmissions();
+  loadRecords();
+}
+
+async function rejectSubmission(id) {
+  const note = prompt(`驳回申报 #${id}，请输入理由（学生可在 App 看到）：`);
+  if (note === null) return;
+  const res = await api('POST', `/api/credits/submissions/${id}/reject`, { review_note: note });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) {
+    alert(`驳回失败：${(data && data.error) || `HTTP ${res.status}`}`);
+    return;
+  }
+  loadSubmissions();
+}
+
+$('submissionStatusFilter').onchange = loadSubmissions;
+$('submissionClassFilter').onchange = loadSubmissions;
+$('refreshSubmissionsBtn').onclick = () => {
+  renderRecordFilters();
+  loadSubmissions();
+};
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}

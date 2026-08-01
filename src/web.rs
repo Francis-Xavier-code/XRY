@@ -1020,6 +1020,18 @@ fn router(state: WebState) -> Router {
         )
         .route("/api/credits/import", post(credits_import))
         .route("/api/credits/export", post(credits_export))
+        .route("/api/credits/submissions", get(credits_submissions_api))
+        .route(
+            "/api/credits/submissions/{id}/approve",
+            post(credits_submission_approve),
+        )
+        .route(
+            "/api/credits/submissions/{id}/reject",
+            post(credits_submission_reject),
+        )
+        .route("/api/credits/evidence/{file}", get(credits_evidence_asset))
+        .route("/api/license/status", get(license_status_api))
+        .route("/api/license/activate", post(license_activate_api))
         .route("/api/update/check", get(update_check_api))
         .route("/api/pairing/create", post(pairing_create))
         .route("/api/pairing/request", post(pairing_request))
@@ -4380,6 +4392,190 @@ fn build_credits_xlsx(db: &crate::state::CreditsDb, class_id: Option<i64>) -> an
     summary_sheet.set_column_width(4, 48)?;
 
     Ok(workbook.save_to_buffer()?)
+}
+
+// ─────────────────────────── 申报审批 API（辅导员） ───────────────────────────
+
+/// 辅导员授权检查：config.license 已激活且 plan 为 admin/pro。
+fn require_advisor_license(state: &WebState) -> std::result::Result<(), ApiError> {
+    let config = AppConfig::load_or_default(&state.paths).map_err(ApiError::internal)?;
+    let license = crate::license::load(&config);
+    if license.is_activated()
+        && (license.plan.contains("admin") || license.plan.contains("pro"))
+    {
+        Ok(())
+    } else {
+        Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "需要辅导员私密钥匙（管理员激活码）：在「设置 → 通用 → 辅导员激活」中输入，或联系开发者 2101497063@qq.com",
+        ))
+    }
+}
+
+/// 申报列表（辅导员；status/class_id 过滤）。
+async fn credits_submissions_api(
+    State(state): State<WebState>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+) -> std::result::Result<Json<Value>, ApiError> {
+    require_auth(&headers, &state)?;
+    require_advisor_license(&state)?;
+    let status = params.get("status").filter(|v| !v.is_empty()).map(String::as_str);
+    let class_id = params
+        .get("class_id")
+        .and_then(|v| v.parse::<i64>().ok());
+    let paths = state.paths.clone();
+    let status = status.map(str::to_string);
+    let submissions = tokio::task::spawn_blocking(move || -> anyhow::Result<Value> {
+        let db = crate::state::CreditsDb::open(&paths.data_dir)?;
+        let rows = db.list_submissions(status.as_deref(), class_id, None, None, None)?;
+        Ok(serde_json::to_value(rows)?)
+    })
+    .await
+    .map_err(ApiError::internal)?
+    .map_err(ApiError::internal)?;
+    Ok(Json(json!({ "ok": true, "submissions": submissions })))
+}
+
+/// 通过申报（辅导员）。
+async fn credits_submission_approve(
+    State(state): State<WebState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Json(body): Json<Value>,
+) -> std::result::Result<Json<Value>, ApiError> {
+    require_mutation(&headers, &state)?;
+    require_advisor_license(&state)?;
+    let note = body
+        .get("review_note")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let paths = state.paths.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        let db = crate::state::CreditsDb::open(&paths.data_dir)?;
+        db.approve_submission(id, &note, "面板辅导员")
+    })
+    .await
+    .map_err(ApiError::internal)?
+    .map_err(ApiError::bad_request)?;
+    Ok(Json(json!({ "ok": true, "submission_id": result })))
+}
+
+/// 驳回申报（辅导员）。
+async fn credits_submission_reject(
+    State(state): State<WebState>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Json(body): Json<Value>,
+) -> std::result::Result<Json<Value>, ApiError> {
+    require_mutation(&headers, &state)?;
+    require_advisor_license(&state)?;
+    let note = body
+        .get("review_note")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let paths = state.paths.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        let db = crate::state::CreditsDb::open(&paths.data_dir)?;
+        db.reject_submission(id, &note)
+    })
+    .await
+    .map_err(ApiError::internal)?
+    .map_err(ApiError::bad_request)?;
+    Ok(Json(json!({ "ok": true, "submission_id": result })))
+}
+
+/// 证据照片访问（辅导员已登录即可）。
+async fn credits_evidence_asset(
+    State(state): State<WebState>,
+    headers: HeaderMap,
+    Path(file): Path<String>,
+) -> std::result::Result<Response, ApiError> {
+    require_auth(&headers, &state)?;
+    let file_name = file.trim_start_matches('/');
+    if file_name.is_empty()
+        || file_name.contains("..")
+        || file_name.contains('/')
+        || file_name.contains('\\')
+    {
+        return Err(ApiError::bad_request("invalid file name"));
+    }
+    let path = state.paths.data_dir.join("evidence").join(file_name);
+    let bytes = std::fs::read(&path).map_err(|_| {
+        ApiError::new(StatusCode::NOT_FOUND, "证据文件不存在")
+    })?;
+    let content_type = match std::path::Path::new(file_name)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("")
+    {
+        "png" => "image/png",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        _ => "image/jpeg",
+    };
+    Ok(Response::builder()
+        .header(CONTENT_TYPE, content_type)
+        .body(axum::body::Body::from(bytes))
+        .map_err(ApiError::internal)?)
+}
+
+// ─────────────────────────── 辅导员激活 API（私密钥匙） ───────────────────────────
+
+/// 激活状态（面板"辅导员激活"区）。
+async fn license_status_api(
+    State(state): State<WebState>,
+    headers: HeaderMap,
+) -> std::result::Result<Json<Value>, ApiError> {
+    require_auth(&headers, &state)?;
+    let config = AppConfig::load_or_default(&state.paths).map_err(ApiError::internal)?;
+    let license = crate::license::load(&config);
+    Ok(Json(json!({
+        "ok": true,
+        "status": license.status,
+        "plan": license.plan,
+        "activated_at": license.activated_at,
+        "expires_at": license.expires_at,
+        "is_admin": license.is_activated()
+            && (license.plan.contains("admin") || license.plan.contains("pro")),
+    })))
+}
+
+/// 输入私密钥匙（管理员激活码）→ 辅导员授权。
+async fn license_activate_api(
+    State(state): State<WebState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> std::result::Result<Json<Value>, ApiError> {
+    require_mutation(&headers, &state)?;
+    let code = body
+        .get("code")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if code.is_empty() {
+        return Err(ApiError::bad_request("code required"));
+    }
+    let paths = state.paths.clone();
+    let payload = tokio::task::spawn_blocking(move || crate::license::activate(&paths, &code))
+        .await
+        .map_err(ApiError::internal)?
+        .map_err(|error| {
+            ApiError::new(
+                StatusCode::BAD_REQUEST,
+                format!("激活失败：{}", error.to_string().lines().next().unwrap_or("激活码无效")),
+            )
+        })?;
+    Ok(Json(json!({
+        "ok": true,
+        "plan": payload.plan,
+        "user": payload.user,
+        "expires_at": payload.expires_at,
+    })))
 }
 
 // ─────────────────────────── 更新检查 API ───────────────────────────

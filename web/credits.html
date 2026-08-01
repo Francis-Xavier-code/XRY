@@ -117,6 +117,22 @@
             </table>
           </div>
         </div>
+
+        <div class="cpanel" id="submissionsPanel">
+          <h2>申报审批 <span class="sbadge" id="pendingCount" style="display:none"></span></h2>
+          <div class="toolbar">
+            <select id="submissionStatusFilter">
+              <option value="">全部状态</option>
+              <option value="pending" selected>待审批</option>
+              <option value="approved">已通过</option>
+              <option value="rejected">已驳回</option>
+            </select>
+            <select id="submissionClassFilter"><option value="">全部班级</option></select>
+            <button class="cbtn secondary" id="refreshSubmissionsBtn">刷新</button>
+            <span class="hint" id="submissionHint"></span>
+          </div>
+          <div id="submissionList"></div>
+        </div>
       </div>
     </div>
   </div>
