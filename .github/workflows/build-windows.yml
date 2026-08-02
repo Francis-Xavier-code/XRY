@@ -68,10 +68,11 @@ jobs:
           Copy-Item communication $stage/communication -Recurse
           Remove-Item $stage/communication/feishu/node_modules -Recurse -Force -ErrorAction SilentlyContinue
           # 捆绑便携 Node.js（桥接脚本 runtime：中继/NapCat/企微/飞书，导员无需自行安装）
-          $nodeIndex = Invoke-RestMethod "https://nodejs.org/dist/latest-v20.x/"
-          $nodeZipName = ($nodeIndex -split '"' | Where-Object { $_ -like 'node-v*-win-x64.zip' } | Select-Object -First 1)
+          $latestNode = (Invoke-RestMethod "https://nodejs.org/dist/index.json") |
+            Where-Object { $_.version -like 'v20.*' } | Select-Object -First 1
+          $nodeZipName = "node-$($latestNode.version)-win-x64.zip"
           $nodeZip = "$env:RUNNER_TEMP\$nodeZipName"
-          Invoke-WebRequest "https://nodejs.org/dist/latest-v20.x/$nodeZipName" -OutFile $nodeZip
+          Invoke-WebRequest "https://nodejs.org/dist/$($latestNode.version)/$nodeZipName" -OutFile $nodeZip
           Expand-Archive $nodeZip "$env:RUNNER_TEMP\node-extract" -Force
           New-Item -ItemType Directory -Force -Path "$stage\node" | Out-Null
           Copy-Item "$env:RUNNER_TEMP\node-extract\node-v*-win-x64\node.exe" "$stage\node\node.exe"
