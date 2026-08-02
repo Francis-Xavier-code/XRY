@@ -59,9 +59,10 @@ jobs:
         run: |
           $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
           $stage = "Hilia-$version-windows"
+          Write-Host "==> 打包到 $PWD\$stage"
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
-          Copy-Item target/release/hilia.exe $stage/
-          Copy-Item windows/tray/target/release/hilia-tray.exe $stage/
+          Copy-Item target/release/hilia.exe $stage/ -Verbose
+          Copy-Item windows/tray/target/release/hilia-tray.exe $stage/ -Verbose
           Copy-Item src/scripts $stage/scripts -Recurse
           Copy-Item kb $stage/kb -Recurse
           Copy-Item src/memes $stage/memes -Recurse
