@@ -79,7 +79,8 @@ jobs:
           Copy-Item "$env:RUNNER_TEMP\node-extract\node-v*-win-x64\node.exe" "$stage\node\node.exe"
           Copy-Item windows/install.ps1 $stage/install.ps1
           Compress-Archive -Path $stage -DestinationPath "$stage.zip"
-          echo "stage_dir=$stage" | Out-File -FilePath $env:GITHUB_ENV -Append
+          # 绝对路径：NSIS File 指令相对脚本目录（windows/），相对路径永远找不到
+          echo "stage_dir=$PWD\$stage" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo "stage_version=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: 生成签名 update.json（版本更新清单）
